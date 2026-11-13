@@ -1,0 +1,90 @@
+import { notFound } from 'next/navigation';
+import Link from 'next/link';
+import type { Metadata } from 'next';
+import { getServerSupabase } from '@/lib/supabase-server';
+import { LEGAL_PAGE_TITLES, LegalPages, LegalSlug, applyFulfillmentTokens, fetchFulfillmentSettings } from '@/lib/marketing-api';
+import { fetchShippingSettings } from '@/lib/pincode-api';
+import { composeLegalText } from '@/lib/legal-intl';
+import { fetchIntlLegalContext } from '@/lib/legal-intl-context';
+
+const VALID_SLUGS = Object.keys(LEGAL_PAGE_TITLES) as LegalSlug[];
+
+// Legal page content is edited from Admin > Marketing > Legal Pages and saved
+// straight to Supabase. Without this, Next.js would statically generate this
+// page once at build time and keep serving that stale copy forever, so admin
+// edits would never show up on the live site until the next deploy.
+export const revalidate = 600; // 10 min cache (was force-dynamic = 1 function run per visit)
+
+async function getLegalPages(): Promise<LegalPages> {
+  const supabase = getServerSupabase();
+  const { data } = await supabase
+    .from('settings')
+    .select('value')
+    .eq('key', 'legal_pages')
+    .maybeSingle();
+  return (data?.value as LegalPages) ?? ({} as LegalPages);
+}
+
+export function generateStaticParams() {
+  return VALID_SLUGS.map((slug) => ({ slug }));
+}
+
+export async function generateMetadata({
+  params,
+}: {
+  params: { slug: string };
+}): Promise<Metadata> {
+  const slug = params.slug as LegalSlug;
+  if (!VALID_SLUGS.includes(slug)) return {};
+  const title = LEGAL_PAGE_TITLES[slug];
+  return {
+    title,
+    description: `${title} for Misha Boutique — read our policy before you shop.`,
+    alternates: { canonical: `/${({"privacy-policy":"privacy-policy","terms-conditions":"terms-and-conditions","shipping-policy":"shipping-delivery-information","refund-policy":"returns-exchange"} as Record<string,string>)[slug]}/` },
+    robots: { index: true, follow: true },
+  };
+}
+
+export default async function LegalPage({ params }: { params: { slug: string } }) {
+  const slug = params.slug as LegalSlug;
+  if (!VALID_SLUGS.includes(slug)) notFound();
+
+  const [pages, fulfillment, shipping, intl] = await Promise.all([
+    getLegalPages(),
+    fetchFulfillmentSettings(),
+    fetchShippingSettings(),
+    fetchIntlLegalContext(),
+  ]);
+  const title = LEGAL_PAGE_TITLES[slug];
+  const rawContent = pages[slug] || 'This page is being updated. Please check back soon.';
+  // {{dispatch_days}}, {{return_days}}, {{shipping_fee}}, etc. always
+  // reflect the live numbers from Admin > Marketing > Shipping & Returns
+  // Timing and Admin > Settings > GST & Shipping.
+  // Phase 7: when international selling is ON the "International Orders" section is shown (and the old
+  // "we ship only within India" line is dropped); when OFF the page is exactly as before.
+  const content = applyFulfillmentTokens(composeLegalText(slug, rawContent, intl), fulfillment, shipping);
+
+  return (
+    <div className="container-boutique max-w-3xl py-10 sm:py-14">
+      <nav className="mb-6 text-xs text-muted-foreground">
+        <Link href="/" className="hover:text-primary">Home</Link>
+        <span className="mx-1">/</span>
+        <span className="text-foreground">{title}</span>
+      </nav>
+
+      <h1 className="font-serif text-3xl font-bold text-primary sm:text-4xl">{title}</h1>
+
+      <div className="mt-6 whitespace-pre-wrap text-sm leading-relaxed text-foreground/80">
+        {content}
+      </div>
+
+      <div className="mt-10 flex flex-wrap gap-x-4 gap-y-2 border-t border-border/60 pt-6 text-xs">
+        {VALID_SLUGS.filter((s) => s !== slug).map((s) => (
+          <Link key={s} href={`/legal/${s}`} className="text-muted-foreground hover:text-primary">
+            {LEGAL_PAGE_TITLES[s]}
+          </Link>
+        ))}
+      </div>
+    </div>
+  );
+}

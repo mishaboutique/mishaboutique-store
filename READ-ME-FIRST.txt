@@ -1,0 +1,4 @@
+git pull first, then replace:
+ app/product/[slug]/product-detail.tsx
+ components/product/reviews-section.tsx
+or: git apply changes.patch
