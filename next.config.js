@@ -34,6 +34,9 @@ const nextConfig = {
     return [
       // Old WooCommerce feed URL (Merchant Center ke saved File URL ke liye) -> naya feed
       { source: '/wp-content/uploads/woo-feed/google/xml/saree.xml', destination: '/feeds/google-saree.xml' },
+      // Merchant Center (CTX Feed) ka asli File URL: google-shopping-fedd.xml (do d). Dono spelling chalengi.
+      { source: '/wp-content/uploads/woo-feed/google/xml/google-shopping-fedd.xml', destination: '/feeds/google-saree.xml' },
+      { source: '/wp-content/uploads/woo-feed/google/xml/google-shopping-feed.xml', destination: '/feeds/google-saree.xml' },
       // Old WordPress media at its original URL -> read from Cloudflare R2 (app/api/wp-uploads).
       { source: '/wp-content/uploads/:path*', destination: '/api/wp-uploads/:path*' },
       { source: '/product-category/:parent*/:slug', destination: '/category/:slug' },      { source: '/product-tag/:slug', destination: '/tag/:slug' },
