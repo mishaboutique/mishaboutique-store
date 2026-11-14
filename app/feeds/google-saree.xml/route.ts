@@ -53,6 +53,8 @@ export async function GET() {
   const idmap: any = (mrow as any)?.value || {};
   const pmap: Record<string, string> = idmap.parents || {};
   const vmap: Record<string, string> = idmap.variants || {};
+  // Purane CTX Feed mein in products ka parent item nahi tha (sirf variants). Unke parent IDs yahan hain.
+  const skipParents = new Set<string>(((idmap.skip_parents as any[]) || []).map((x) => String(x)));
 
   const products: any[] = (await fetchProductsServer()) as any[];
   const { data: vrows } = await sb
@@ -116,16 +118,18 @@ export async function GET() {
   for (const p of products) {
     const pid = pmap[p.slug] || p.sku || p.slug;
     const pcolor = niceColor((p.colors || []).slice(0, 3).join(' ')) || 'Multicolor';
-    item({
-      id: pid,
-      group: pid,
-      title: p.name,
-      link: SITE_URL + '/product/' + p.slug + '/',
-      images: p.images || [],
-      price: p.price,
-      color: pcolor,
-      product: p,
-    });
+    if (!skipParents.has(String(pid))) {
+      item({
+        id: pid,
+        group: pid,
+        title: p.name,
+        link: SITE_URL + '/product/' + p.slug + '/',
+        images: p.images || [],
+        price: p.price,
+        color: pcolor,
+        product: p,
+      });
+    }
     const seen = new Set<string>();
     for (const v of byProduct.get(p.id) || []) {
       const key = p.slug + '|' + cn(v.color);
