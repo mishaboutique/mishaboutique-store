@@ -37,6 +37,11 @@ const nextConfig = {
       // Merchant Center (CTX Feed) ka asli File URL: google-shopping-fedd.xml (do d). Dono spelling chalengi.
       { source: '/wp-content/uploads/woo-feed/google/xml/google-shopping-fedd.xml', destination: '/feeds/google-saree.xml' },
       { source: '/wp-content/uploads/woo-feed/google/xml/google-shopping-feed.xml', destination: '/feeds/google-saree.xml' },
+      // Pinterest / Facebook feeds (purane CTX Feed URLs) -> naye feeds (Google feed ke items se bante hain)
+      { source: '/wp-content/uploads/woo-feed/pinterest/xml/pinterestfeed.xml', destination: '/feeds/pinterest.xml' },
+      { source: '/wp-content/uploads/woo-feed/pinterest/csv/pinterestcsvvfeed.csv', destination: '/feeds/pinterest.csv' },
+      { source: '/wp-content/uploads/woo-feed/pinterest_rss/xml/pinterestrssboard.xml', destination: '/feeds/pinterest-rss.xml' },
+      { source: '/wp-content/uploads/woo-feed/facebook/xml/facebook-feed.xml', destination: '/feeds/facebook.xml' },
       // Old WordPress media at its original URL -> read from Cloudflare R2 (app/api/wp-uploads).
       { source: '/wp-content/uploads/:path*', destination: '/api/wp-uploads/:path*' },
       { source: '/product-category/:parent*/:slug', destination: '/category/:slug' },      { source: '/product-tag/:slug', destination: '/tag/:slug' },
