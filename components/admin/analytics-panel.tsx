@@ -17,7 +17,7 @@ import {
   LabelList,
   Cell,
 } from 'recharts';
-import { LayoutDashboard, AlertTriangle, TrendingUp, ShoppingBag, Percent, PackageX, BarChart3, Wifi, Receipt, Search, ShoppingCart, CreditCard, CheckCircle2, PackagePlus, Loader2, ArrowUp, ArrowDown, ArrowUpDown, Repeat } from 'lucide-react';
+import { LayoutDashboard, AlertTriangle, TrendingUp, ShoppingBag, Percent, PackageX, BarChart3, Wifi, Receipt, Search, ShoppingCart, CreditCard, CheckCircle2, PackagePlus, Loader2, ArrowUp, ArrowDown, ArrowUpDown, Repeat, Users } from 'lucide-react';
 import { startOfDay, endOfDay, subDays } from 'date-fns';
 import { fetchAnalytics, AnalyticsData } from '@/lib/analytics-api';
 import { updateProduct, extractErrorMessage } from '@/lib/products-api';
@@ -27,6 +27,7 @@ import { toast } from 'sonner';
 import TrafficPanel from '@/components/admin/traffic-panel';
 import SearchInsightsPanel from '@/components/admin/search-insights-panel';
 import VariantSwitchesPanel from '@/components/admin/variant-switches-panel';
+import ShopperInsightsPanel from '@/components/admin/shopper-insights-panel';
 import { DateRangePicker, SimpleRange } from '@/components/admin/date-range-picker';
 import DashboardsTab from '@/components/admin/dashboards/dashboards-tab';
 
@@ -36,7 +37,7 @@ const ORDER_DOT_COLOR = '#8b5e3c';
 
 // ── Tab bar ────────────────────────────────────────────────────────────────
 
-type Tab = 'dashboards' | 'sales' | 'traffic' | 'search' | 'variants';
+type Tab = 'dashboards' | 'shoppers' | 'sales' | 'traffic' | 'search' | 'variants';
 
 function TabBar({
   active,
@@ -52,6 +53,9 @@ function TabBar({
       <div className="flex w-full max-w-full gap-1 overflow-x-auto rounded-xl sm:w-fit border border-border/60 bg-muted/40 p-1">
         <TabButton value="dashboards" active={active} onChange={onChange} icon={<LayoutDashboard className="h-4 w-4" />}>
           Dashboards
+        </TabButton>
+        <TabButton value="shoppers" active={active} onChange={onChange} icon={<Users className="h-4 w-4" />}>
+          Shopper Insights
         </TabButton>
         <TabButton value="sales" active={active} onChange={onChange} icon={<BarChart3 className="h-4 w-4" />}>
           Sales Analytics
@@ -789,6 +793,8 @@ export default function AnalyticsPanel() {
       />
       {activeTab === 'dashboards' ? (
         <DashboardsTab />
+      ) : activeTab === 'shoppers' ? (
+        <ShopperInsightsPanel />
       ) : activeTab === 'sales' ? (
         <SalesPanel range={range} onRangeChange={setRange} />
       ) : activeTab === 'traffic' ? (
