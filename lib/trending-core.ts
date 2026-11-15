@@ -2,9 +2,16 @@ import 'server-only';
 import { getSupabaseAdmin } from '@/lib/supabase-admin';
 import { fetchCapped } from '@/lib/fetch-capped';
 import { fetchPopularityRankServer } from '@/lib/popularity-rank-server';
+import {
+  TRENDING_CONFIG_KEY,
+  TrendingConfig,
+  normalizeTrendingConfig,
+  trendingSinceISO,
+} from '@/lib/trending-config';
 
 /**
- * "Trending Now" ranking -- CONVERSION first (pichle 30 din):
+ * "Trending Now" ranking -- CONVERSION first (admin ki chuni date ke baad se, default pichle 30 din;
+ * admin har signal (purchase / checkout / cart / views) alag ON/OFF kar sakta hai):
  *   1. Purchase (orders)            sabse zyada
  *   2. Begin checkout               tie-break
  *   3. Add to cart                  tie-break
@@ -14,26 +21,48 @@ import { fetchPopularityRankServer } from '@/lib/popularity-rank-server';
  * Jinka koi data nahi, wo lifetime-popularity order me peeche jodte hain, taaki
  * strip ke liye hamesha kaafi products mil sakein. Kabhi throw nahi karta.
  */
-const DAYS = 30;
 const DEAD_ORDER_STATUSES = new Set(['cancelled', 'failed', 'refunded', 'wc-cancelled', 'wc-failed', 'wc-refunded']);
 
-export async function computeTrendingRanking(): Promise<string[]> {
+/** Admin ka saved config (table na ho / error ho to default). */
+export async function loadTrendingConfig(): Promise<TrendingConfig> {
+  try {
+    const { data } = await getSupabaseAdmin()
+      .from('tracking_settings')
+      .select('value')
+      .eq('key', TRENDING_CONFIG_KEY)
+      .maybeSingle();
+    return normalizeTrendingConfig(data?.value);
+  } catch {
+    return normalizeTrendingConfig(null);
+  }
+}
+
+export async function computeTrendingRanking(cfg: TrendingConfig = normalizeTrendingConfig(null)): Promise<string[]> {
   try {
     const supabase = getSupabaseAdmin();
-    const since = new Date(Date.now() - DAYS * 86400_000).toISOString();
+    const since = trendingSinceISO(cfg);
+    const eventTypes = [
+      cfg.view && 'product_view',
+      cfg.cart && 'add_to_cart',
+      cfg.checkout && 'checkout_start',
+    ].filter(Boolean) as string[];
 
     const [events, orders, popularity] = await Promise.all([
-      fetchCapped<{ product_id: string | null; event_type: string; session_id: string | null }>((a, b) =>
+      eventTypes.length === 0
+        ? Promise.resolve([] as { product_id: string | null; event_type: string; session_id: string | null }[])
+        : fetchCapped<{ product_id: string | null; event_type: string; session_id: string | null }>((a, b) =>
         supabase
           .from('activity_events')
           .select('product_id, event_type, session_id')
-          .in('event_type', ['product_view', 'add_to_cart', 'checkout_start'])
+          .in('event_type', eventTypes)
           .not('product_id', 'is', null)
           .gte('created_at', since)
           .order('created_at', { ascending: false })
           .range(a, b)
       ),
-      fetchCapped<{ items: any; status: string | null }>(
+      !cfg.purchase
+        ? Promise.resolve([] as { items: any; status: string | null }[])
+        : fetchCapped<{ items: any; status: string | null }>(
         (a, b) =>
           supabase
             .from('orders')

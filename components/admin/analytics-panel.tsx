@@ -26,6 +26,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import type { FeaturedFlags, FeaturedPlacement } from '@/lib/featured-placements';
+import { DEFAULT_TRENDING_CONFIG, TrendingConfig, TrendingSignal } from '@/lib/trending-config';
 import { toast } from 'sonner';
 import TrafficPanel from '@/components/admin/traffic-panel';
 import SearchInsightsPanel from '@/components/admin/search-insights-panel';
@@ -203,6 +204,116 @@ function FeaturedToggles() {
   );
 }
 
+const TRENDING_SIGNAL_OPTIONS: { type: TrendingSignal; label: string }[] = [
+  { type: 'purchase', label: 'Purchase (order) gino' },
+  { type: 'checkout', label: 'Begin checkout gino' },
+  { type: 'cart', label: 'Add to cart gino' },
+  { type: 'view', label: 'Views (product dekhna) gino' },
+];
+
+function TrendingRankingSettings() {
+  const [loaded, setLoaded] = useState(false);
+  const [cfg, setCfg] = useState<TrendingConfig>(DEFAULT_TRENDING_CONFIG);
+  const [missing, setMissing] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/admin/trending-settings')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (!alive || !j) return;
+        if (j.config) setCfg(j.config);
+        setMissing(!!j.tableMissing);
+        setLoaded(true);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const save = async (body: Record<string, unknown>, okMsg: string) => {
+    setSaving(true);
+    try {
+      const res = await fetch('/api/admin/trending-settings', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j.error || 'Save nahi hua');
+      if (j.config) setCfg(j.config);
+      toast.success(okMsg);
+    } catch (e: any) {
+      toast.error(e.message || 'Save nahi hua');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const allOff = !cfg.purchase && !cfg.checkout && !cfg.cart && !cfg.view;
+
+  return (
+    <div className="mt-4 border-t border-border/60 pt-3">
+      <p className="mb-1 text-sm font-semibold">Trending kis data se bane?</p>
+      <p className="mb-3 text-xs text-muted-foreground">
+        Jo OFF karoge wo ranking me nahi gina jayega. Priority: Purchase, phir Checkout, Cart, Views.
+      </p>
+      <ul className="space-y-2">
+        {TRENDING_SIGNAL_OPTIONS.map((o) => (
+          <li key={o.type} className="flex items-center justify-between gap-3">
+            <span className="text-sm">{o.label}</span>
+            <Switch
+              checked={cfg[o.type]}
+              disabled={!loaded || saving || missing}
+              onCheckedChange={(v) => save({ signal: o.type, enabled: v }, 'Save ho gaya (1-2 min me site par lagu)')}
+            />
+          </li>
+        ))}
+      </ul>
+      {allOff && (
+        <p className="mt-2 text-[11px] text-amber-700">
+          Sab OFF hai, to sirf lifetime popularity ke hisaab se products dikhenge.
+        </p>
+      )}
+      <div className="mt-3">
+        <label className="mb-1 block text-sm">Is date ke baad ka data dekho</label>
+        <div className="flex items-center gap-2">
+          <input
+            type="date"
+            value={cfg.since ?? ''}
+            max={new Date().toISOString().slice(0, 10)}
+            disabled={!loaded || saving || missing}
+            onChange={(e) =>
+              save({ since: e.target.value || null }, e.target.value ? 'Date set ho gayi' : 'Date hat gayi (pichle 30 din)')
+            }
+            className="h-8 flex-1 rounded-md border border-border bg-background px-2 text-sm"
+          />
+          {cfg.since && (
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => save({ since: null }, 'Date hat gayi (pichle 30 din)')}
+              className="text-xs text-muted-foreground underline"
+            >
+              Hatao
+            </button>
+          )}
+        </div>
+        <p className="mt-1 text-[11px] text-muted-foreground">
+          {cfg.since ? `${cfg.since} (India time, subah 12 baje) se aaj tak ka data.` : 'Date khali = pichle 30 din.'}
+        </p>
+      </div>
+      {missing && (
+        <p className="mt-2 text-[11px] text-amber-700">
+          Pehle Supabase me 20261115020000_tracking_settings.sql run karo.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function IgnoreThisBrowser() {
   const [on, setOn] = useState(false);
   useEffect(() => {
@@ -298,6 +409,7 @@ function TabBar({
             <p className="mt-3 text-[11px] text-muted-foreground">Kam se kam 1 tab ON rehna zaroori hai.</p>
             <TrackingToggle />
             <FeaturedToggles />
+            <TrendingRankingSettings />
             <IgnoreThisBrowser />
           </PopoverContent>
         </Popover>

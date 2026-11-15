@@ -1,19 +1,27 @@
 import { NextResponse } from 'next/server';
 import { unstable_cache } from 'next/cache';
-import { computeTrendingRanking } from '@/lib/trending-core';
+import { computeTrendingRanking, loadTrendingConfig } from '@/lib/trending-core';
+import { TrendingConfig } from '@/lib/trending-config';
 
 /**
  * GET /api/products/trending -> { ranked: string[] }
- * Product ids, conversion-priority se (Purchase > Begin checkout > Add to cart > Views,
- * pichle 30 din), phir lifetime popularity. 1 ghante ka cache = Supabase par bahut kam load.
+ * Product ids, admin ke chune hue signals (Purchase > Begin checkout > Add to cart > Views)
+ * aur date ke baad se, phir lifetime popularity.
+ * Config cache key me hai, to toggle/date badalte hi naya ranking banta hai; baaki 1 ghante cache.
  */
-export const revalidate = 3600;
+export const dynamic = 'force-dynamic';
 
-const cachedRanking = unstable_cache(computeTrendingRanking, ['trending-ranking-v1'], { revalidate: 3600 });
+const cachedRanking = unstable_cache(
+  async (cfgKey: string) => computeTrendingRanking(JSON.parse(cfgKey) as TrendingConfig),
+  ['trending-ranking-v2'],
+  { revalidate: 3600 }
+);
 
 export async function GET() {
   try {
-    return NextResponse.json({ ranked: await cachedRanking() });
+    const cfg = await loadTrendingConfig();
+    const ranked = await cachedRanking(JSON.stringify(cfg));
+    return NextResponse.json({ ranked }, { headers: { 'cache-control': 'public, s-maxage=60, stale-while-revalidate=300' } });
   } catch (err) {
     console.error('[trending] error', err);
     return NextResponse.json({ ranked: [] });
