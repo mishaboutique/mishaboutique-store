@@ -17,12 +17,14 @@ import {
   LabelList,
   Cell,
 } from 'recharts';
-import { LayoutDashboard, AlertTriangle, TrendingUp, ShoppingBag, Percent, PackageX, BarChart3, Wifi, Receipt, Search, ShoppingCart, CreditCard, CheckCircle2, PackagePlus, Loader2, ArrowUp, ArrowDown, ArrowUpDown, Repeat, Users } from 'lucide-react';
+import { LayoutDashboard, AlertTriangle, TrendingUp, ShoppingBag, Percent, PackageX, BarChart3, Wifi, Receipt, Search, ShoppingCart, CreditCard, CheckCircle2, PackagePlus, Loader2, ArrowUp, ArrowDown, ArrowUpDown, Repeat, Users, Settings2 } from 'lucide-react';
 import { startOfDay, endOfDay, subDays } from 'date-fns';
 import { fetchAnalytics, AnalyticsData } from '@/lib/analytics-api';
 import { updateProduct, extractErrorMessage } from '@/lib/products-api';
 import { formatINR } from '@/lib/format';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Switch } from '@/components/ui/switch';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { toast } from 'sonner';
 import TrafficPanel from '@/components/admin/traffic-panel';
 import SearchInsightsPanel from '@/components/admin/search-insights-panel';
@@ -39,36 +41,79 @@ const ORDER_DOT_COLOR = '#8b5e3c';
 
 type Tab = 'dashboards' | 'shoppers' | 'sales' | 'traffic' | 'search' | 'variants';
 
+const TAB_OPTIONS: { value: Tab; label: string; icon: React.ReactNode }[] = [
+  { value: 'dashboards', label: 'Dashboards', icon: <LayoutDashboard className="h-4 w-4" /> },
+  { value: 'shoppers', label: 'Shopper Insights', icon: <Users className="h-4 w-4" /> },
+  { value: 'sales', label: 'Sales Analytics', icon: <BarChart3 className="h-4 w-4" /> },
+  { value: 'traffic', label: 'Traffic', icon: <Wifi className="h-4 w-4" /> },
+  { value: 'search', label: 'Search', icon: <Search className="h-4 w-4" /> },
+  { value: 'variants', label: 'Variant Switches', icon: <Repeat className="h-4 w-4" /> },
+];
+
+const HIDDEN_TABS_KEY = 'admin-analytics-hidden-tabs';
+
 function TabBar({
   active,
   onChange,
   right,
+  hidden,
+  onToggle,
 }: {
   active: Tab;
   onChange: (t: Tab) => void;
   right?: React.ReactNode;
+  hidden: Tab[];
+  onToggle: (t: Tab, show: boolean) => void;
 }) {
+  const visibleCount = TAB_OPTIONS.length - hidden.length;
   return (
     <div className="mb-4 flex flex-wrap items-center justify-between gap-3 sm:mb-6">
-      <div className="flex w-full max-w-full gap-1 overflow-x-auto rounded-xl sm:w-fit border border-border/60 bg-muted/40 p-1">
-        <TabButton value="dashboards" active={active} onChange={onChange} icon={<LayoutDashboard className="h-4 w-4" />}>
-          Dashboards
-        </TabButton>
-        <TabButton value="shoppers" active={active} onChange={onChange} icon={<Users className="h-4 w-4" />}>
-          Shopper Insights
-        </TabButton>
-        <TabButton value="sales" active={active} onChange={onChange} icon={<BarChart3 className="h-4 w-4" />}>
-          Sales Analytics
-        </TabButton>
-        <TabButton value="traffic" active={active} onChange={onChange} icon={<Wifi className="h-4 w-4" />}>
-          Traffic
-        </TabButton>
-        <TabButton value="search" active={active} onChange={onChange} icon={<Search className="h-4 w-4" />}>
-          Search
-        </TabButton>
-        <TabButton value="variants" active={active} onChange={onChange} icon={<Repeat className="h-4 w-4" />}>
-          Variant Switches
-        </TabButton>
+      <div className="flex w-full max-w-full items-center gap-1 sm:w-fit">
+        <div className="flex min-w-0 gap-1 overflow-x-auto rounded-xl border border-border/60 bg-muted/40 p-1">
+          {TAB_OPTIONS.filter((t) => !hidden.includes(t.value)).map((t) => (
+            <TabButton key={t.value} value={t.value} active={active} onChange={onChange} icon={t.icon}>
+              {t.label}
+            </TabButton>
+          ))}
+        </div>
+        <Popover>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              aria-label="Tabs settings"
+              title="Tabs dikhao / chhupao"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border/60 bg-muted/40 text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <Settings2 className="h-4 w-4" />
+            </button>
+          </PopoverTrigger>
+          <PopoverContent align="start" className="w-64 p-3">
+            <p className="mb-1 text-sm font-semibold">Tabs dikhao / chhupao</p>
+            <p className="mb-3 text-xs text-muted-foreground">
+              Jo tab nahi chahiye use OFF karo. Ye sirf is browser me save hota hai.
+            </p>
+            <ul className="space-y-2">
+              {TAB_OPTIONS.map((t) => {
+                const isOn = !hidden.includes(t.value);
+                const isLastOn = isOn && visibleCount <= 1;
+                return (
+                  <li key={t.value} className="flex items-center justify-between gap-3">
+                    <span className="flex items-center gap-2 text-sm">
+                      {t.icon}
+                      {t.label}
+                    </span>
+                    <Switch
+                      checked={isOn}
+                      disabled={isLastOn}
+                      onCheckedChange={(v) => onToggle(t.value, v)}
+                    />
+                  </li>
+                );
+              })}
+            </ul>
+            <p className="mt-3 text-[11px] text-muted-foreground">Kam se kam 1 tab ON rehna zaroori hai.</p>
+          </PopoverContent>
+        </Popover>
       </div>
       {active === 'sales' && right}
     </div>
@@ -779,6 +824,42 @@ function SummaryCard({
 
 export default function AnalyticsPanel() {
   const [activeTab, setActiveTab] = useState<Tab>('dashboards');
+  const [hiddenTabs, setHiddenTabs] = useState<Tab[]>([]);
+
+  // Saved settings load karo (sirf browser me)
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(HIDDEN_TABS_KEY);
+      if (!raw) return;
+      const valid = TAB_OPTIONS.map((t) => t.value);
+      const saved = (JSON.parse(raw) as Tab[]).filter((t) => valid.includes(t));
+      if (saved.length < valid.length) setHiddenTabs(saved);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  // Agar abhi khula tab chhup gaya, to pehle visible tab par jao
+  useEffect(() => {
+    if (hiddenTabs.includes(activeTab)) {
+      const first = TAB_OPTIONS.find((t) => !hiddenTabs.includes(t.value));
+      if (first) setActiveTab(first.value);
+    }
+  }, [hiddenTabs, activeTab]);
+
+  const handleToggleTab = (tab: Tab, show: boolean) => {
+    setHiddenTabs((prev) => {
+      const next = show ? prev.filter((t) => t !== tab) : [...prev, tab];
+      if (next.length >= TAB_OPTIONS.length) return prev; // sab chhupne nahi denge
+      try {
+        localStorage.setItem(HIDDEN_TABS_KEY, JSON.stringify(next));
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  };
+
   const [range, setRange] = useState<SimpleRange>(() => ({
     from: startOfDay(subDays(new Date(), 29)),
     to: endOfDay(new Date()),
@@ -789,6 +870,8 @@ export default function AnalyticsPanel() {
       <TabBar
         active={activeTab}
         onChange={setActiveTab}
+        hidden={hiddenTabs}
+        onToggle={handleToggleTab}
         right={<DateRangePicker value={range} onChange={setRange} />}
       />
       {activeTab === 'dashboards' ? (
