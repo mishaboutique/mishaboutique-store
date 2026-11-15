@@ -141,6 +141,53 @@ function getGeo(): Promise<Geo | null> {
   return Promise.race([geoPromise, new Promise<null>((res) => setTimeout(() => res(null), 1500))]);
 }
 
+// ── Sirf asli insaan (human) ginne ke liye filters ─────────────────────────
+// 1) Admin ne "is browser ko ignore karo" ON kiya ho to kuch track nahi hota.
+// 2) Known bots / automation (Googlebot, headless Chrome, curl, ...) track nahi hote.
+// 3) page_view / product_view tabhi jaate hain jab visitor ne kuch touch/click/hilaya ho.
+//    (cart, checkout, purchase jaisi pakki actions par ye wait nahi hota.)
+const IGNORE_KEY = 'saaj_ignore_me';
+const HUMAN_KEY = 'saaj_human_v1';
+const HUMAN_GATED_EVENTS = ['page_view', 'product_view'];
+const BOT_RE =
+  /bot|crawl|spider|slurp|facebookexternalhit|facebot|headless|lighthouse|pagespeed|gtmetrix|pingdom|uptime|monitor|python|curl\/|wget|httpclient|java\/|go-http|scrapy|phantom|selenium|puppeteer|playwright|ahrefs|semrush|mj12|dotbot|petalbot|yandex|baidu|duckduck|ia_archiver|embedly|preview/i;
+
+function shouldSkipTracking(): boolean {
+  if (typeof window === 'undefined') return true;
+  try {
+    if (window.localStorage.getItem(IGNORE_KEY) === '1') return true;
+  } catch {}
+  try {
+    const nav = window.navigator;
+    if (BOT_RE.test(nav.userAgent || '')) return true;
+    if ((nav as any).webdriver === true) return true;
+  } catch {}
+  return false;
+}
+
+let humanPromise: Promise<boolean> | null = null;
+
+function waitForHuman(): Promise<boolean> {
+  try {
+    if (window.sessionStorage.getItem(HUMAN_KEY)) return Promise.resolve(true);
+  } catch {}
+  if (!humanPromise) {
+    humanPromise = new Promise<boolean>((resolve) => {
+      const evs = ['pointerdown', 'touchstart', 'keydown', 'mousemove', 'wheel'];
+      const done = () => {
+        evs.forEach((e) => window.removeEventListener(e, done));
+        try {
+          window.sessionStorage.setItem(HUMAN_KEY, '1');
+        } catch {}
+        resolve(true);
+      };
+      evs.forEach((e) => window.addEventListener(e, done, { passive: true }));
+      // Bot ho to kabhi resolve nahi hoga -> event bas drop ho jaata hai.
+    });
+  }
+  return humanPromise;
+}
+
 // ── Admin "tracking band karo" switches ─────────────────────────────────────
 // Admin (Analytics > settings) kuch event types OFF kar sakta hai taaki DB na bhare.
 // Config /api/track-config se aata hai, browser me 30 min cache hota hai.
@@ -195,6 +242,8 @@ function getDisabledEvents(): Promise<string[]> {
  */
 export async function trackEvent(eventType: ActivityEventType, options: TrackOptions = {}) {
   try {
+    if (shouldSkipTracking()) return;
+    if (HUMAN_GATED_EVENTS.includes(eventType) && !(await waitForHuman())) return;
     if (CONTROLLABLE_EVENTS.includes(eventType) && (await getDisabledEvents()).includes(eventType)) return;
     const base = {
       session_id: getSessionId(),

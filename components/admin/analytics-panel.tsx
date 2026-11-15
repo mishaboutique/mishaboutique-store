@@ -25,6 +25,7 @@ import { formatINR } from '@/lib/format';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import type { FeaturedFlags, FeaturedPlacement } from '@/lib/featured-placements';
 import { toast } from 'sonner';
 import TrafficPanel from '@/components/admin/traffic-panel';
 import SearchInsightsPanel from '@/components/admin/search-insights-panel';
@@ -52,9 +53,14 @@ const TAB_OPTIONS: { value: Tab; label: string; icon: React.ReactNode }[] = [
 
 const HIDDEN_TABS_KEY = 'admin-analytics-hidden-tabs';
 
+const TRACK_OPTIONS: { type: string; label: string }[] = [
+  { type: 'variant_switch', label: 'Variant Switch data jama karo' },
+  { type: 'search', label: 'Search data jama karo' },
+];
+
 function TrackingToggle() {
   const [loaded, setLoaded] = useState(false);
-  const [on, setOn] = useState(true);
+  const [disabled, setDisabled] = useState<string[]>([]);
   const [missing, setMissing] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -64,7 +70,7 @@ function TrackingToggle() {
       .then((r) => (r.ok ? r.json() : null))
       .then((j) => {
         if (!alive || !j) return;
-        setOn(!(j.disabled ?? []).includes('variant_switch'));
+        setDisabled(Array.isArray(j.disabled) ? j.disabled : []);
         setMissing(!!j.tableMissing);
         setLoaded(true);
       })
@@ -74,18 +80,18 @@ function TrackingToggle() {
     };
   }, []);
 
-  const change = async (v: boolean) => {
+  const change = async (type: string, v: boolean) => {
     setSaving(true);
     try {
       const res = await fetch('/api/admin/tracking-settings', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ eventType: 'variant_switch', enabled: v }),
+        body: JSON.stringify({ eventType: type, enabled: v }),
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(j.error || 'Save nahi hua');
-      setOn(v);
-      toast.success(v ? 'Variant data jama hona chalu' : 'Variant data jama hona band (naye visitors par 30 min me lagu)');
+      setDisabled(Array.isArray(j.disabled) ? j.disabled : []);
+      toast.success(v ? 'Data jama hona chalu' : 'Data jama hona band (naye visitors par 30 min me lagu)');
     } catch (e: any) {
       toast.error(e.message || 'Save nahi hua');
     } finally {
@@ -96,18 +102,135 @@ function TrackingToggle() {
   return (
     <div className="mt-4 border-t border-border/60 pt-3">
       <p className="mb-1 text-sm font-semibold">Data jama karna (poori site)</p>
-      <p className="mb-2 text-xs text-muted-foreground">
-        OFF karoge to Variant Switch ka naya data Supabase me save nahi hoga. Purana data rahega.
+      <p className="mb-3 text-xs text-muted-foreground">
+        OFF karoge to naya data Supabase me save nahi hoga. Purana data rahega. Cart, checkout aur order ka data
+        kabhi band nahi hota.
       </p>
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-sm">Variant Switch data jama karo</span>
-        <Switch checked={on} disabled={!loaded || saving || missing} onCheckedChange={change} />
-      </div>
+      <ul className="space-y-2">
+        {TRACK_OPTIONS.map((o) => (
+          <li key={o.type} className="flex items-center justify-between gap-3">
+            <span className="text-sm">{o.label}</span>
+            <Switch
+              checked={!disabled.includes(o.type)}
+              disabled={!loaded || saving || missing}
+              onCheckedChange={(v) => change(o.type, v)}
+            />
+          </li>
+        ))}
+      </ul>
       {missing && (
         <p className="mt-2 text-[11px] text-amber-700">
           Pehle Supabase me 20261115020000_tracking_settings.sql run karo.
         </p>
       )}
+    </div>
+  );
+}
+
+const FEATURED_OPTIONS: { type: FeaturedPlacement; label: string }[] = [
+  { type: 'home', label: 'Home page ke top par' },
+  { type: 'shop', label: 'Shop page (3 product ke baad)' },
+  { type: 'category', label: 'Category page (3 product ke baad)' },
+  { type: 'product', label: 'Product page ("You may also like" se pehle)' },
+];
+
+function FeaturedToggles() {
+  const [loaded, setLoaded] = useState(false);
+  const [flags, setFlags] = useState<FeaturedFlags>({ home: false, shop: false, category: false, product: false });
+  const [missing, setMissing] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/admin/featured-settings')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (!alive || !j) return;
+        if (j.flags) setFlags(j.flags);
+        setMissing(!!j.tableMissing);
+        setLoaded(true);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const change = async (placement: FeaturedPlacement, v: boolean) => {
+    setSaving(true);
+    try {
+      const res = await fetch('/api/admin/featured-settings', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ placement, enabled: v }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j.error || 'Save nahi hua');
+      if (j.flags) setFlags(j.flags);
+      toast.success(v ? 'Chalu ho gaya (1-2 min me site par dikhega)' : 'Band ho gaya (1-2 min me site se hat jayega)');
+    } catch (e: any) {
+      toast.error(e.message || 'Save nahi hua');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="mt-4 border-t border-border/60 pt-3">
+      <p className="mb-1 text-sm font-semibold">Customers ko "Trending Now" dikhao</p>
+      <p className="mb-3 text-xs text-muted-foreground">
+        Sabse zyada bikne wale products. Har jagah alag ON/OFF. Data kam ho to apne aap nahi dikhta.
+      </p>
+      <ul className="space-y-2">
+        {FEATURED_OPTIONS.map((o) => (
+          <li key={o.type} className="flex items-center justify-between gap-3">
+            <span className="text-sm">{o.label}</span>
+            <Switch
+              checked={flags[o.type]}
+              disabled={!loaded || saving || missing}
+              onCheckedChange={(v) => change(o.type, v)}
+            />
+          </li>
+        ))}
+      </ul>
+      {missing && (
+        <p className="mt-2 text-[11px] text-amber-700">
+          Pehle Supabase me 20261115020000_tracking_settings.sql run karo.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function IgnoreThisBrowser() {
+  const [on, setOn] = useState(false);
+  useEffect(() => {
+    try {
+      setOn(localStorage.getItem('saaj_ignore_me') === '1');
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  const change = (v: boolean) => {
+    try {
+      if (v) localStorage.setItem('saaj_ignore_me', '1');
+      else localStorage.removeItem('saaj_ignore_me');
+      setOn(v);
+      toast.success(v ? 'Ab is browser ke visits/carts ginti me nahi aayenge' : 'Is browser ki tracking wapas chalu');
+    } catch {
+      toast.error('Browser ne save karne nahi diya');
+    }
+  };
+  return (
+    <div className="mt-4 border-t border-border/60 pt-3">
+      <p className="mb-1 text-sm font-semibold">Mera apna device ignore karo</p>
+      <p className="mb-2 text-xs text-muted-foreground">
+        Apne test carts/visits ginti me na aayein. Har device/browser par alag se ON karna padega.
+      </p>
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm">Is browser ko ignore karo</span>
+        <Switch checked={on} onCheckedChange={change} />
+      </div>
     </div>
   );
 }
@@ -147,7 +270,7 @@ function TabBar({
               <Settings2 className="h-4 w-4" />
             </button>
           </PopoverTrigger>
-          <PopoverContent align="start" className="w-64 p-3">
+          <PopoverContent align="start" className="max-h-[80vh] w-72 overflow-y-auto p-3">
             <p className="mb-1 text-sm font-semibold">Tabs dikhao / chhupao</p>
             <p className="mb-3 text-xs text-muted-foreground">
               Jo tab nahi chahiye use OFF karo. Ye sirf is browser me save hota hai.
@@ -173,6 +296,8 @@ function TabBar({
             </ul>
             <p className="mt-3 text-[11px] text-muted-foreground">Kam se kam 1 tab ON rehna zaroori hai.</p>
             <TrackingToggle />
+            <FeaturedToggles />
+            <IgnoreThisBrowser />
           </PopoverContent>
         </Popover>
       </div>
