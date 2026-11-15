@@ -76,6 +76,25 @@ type V = {
 
 const cache = new Map<string, { at: number; body: any }>();
 
+function chunk<T>(a: T[], n: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < a.length; i += n) out.push(a.slice(i, i + n));
+  return out;
+}
+
+// Visitor/event totals for the "pichle period se compare" arrows.
+function summarize(rows: Ev[]) {
+  const key = (e: Ev) => e.visitor_id || e.user_id || e.session_id;
+  const atc = new Set<string>(), co = new Set<string>(), buy = new Set<string>();
+  let atcEvents = 0, revenue = 0;
+  for (const e of rows) {
+    if (e.event_type === 'add_to_cart') { atc.add(key(e)); atcEvents += 1; }
+    else if (e.event_type === 'checkout_start') co.add(key(e));
+    else if (e.event_type === 'purchase') { buy.add(key(e)); revenue += Number(e.metadata?.total) || 0; }
+  }
+  return { atcEvents, atcVisitors: atc.size, checkoutVisitors: co.size, purchaseVisitors: buy.size, revenue: Math.round(revenue) };
+}
+
 const istDay = (iso: string) => new Date(new Date(iso).getTime() + IST_MS).toISOString().slice(0, 10);
 const istHour = (iso: string) => new Date(new Date(iso).getTime() + IST_MS).getUTCHours();
 
@@ -169,6 +188,7 @@ export async function GET(req: Request) {
     const sessionsAtc = new Set<string>();
     const sessionsCo = new Set<string>();
     const sessionsBuy = new Set<string>();
+    const sessionCartValue = new Map<string, number>();
     const hourly = Array.from({ length: 24 }, (_, hour) => ({ hour, atc: 0, checkout: 0 }));
     const coSeenHour = new Set<string>();
     const daily = new Map<string, { atc: number; checkout: number; purchase: number }>();
@@ -226,6 +246,7 @@ export async function GET(req: Request) {
         if (!coSeenHour.has(hk)) { coSeenHour.add(hk); hourly[istHour(e.created_at)].checkout += 1; }
         const cv = Number(md.cartValue) || 0;
         if (cv > v.cartValue) v.cartValue = cv;
+        if (cv > (sessionCartValue.get(e.session_id) ?? 0)) sessionCartValue.set(e.session_id, cv);
         if (e.product_id) {
           getP(e.product_id).coV.add(key);
           v.products.set(e.product_id, v.products.get(e.product_id) ?? 0);
@@ -242,21 +263,125 @@ export async function GET(req: Request) {
       }
     }
 
+    // ── real orders in range: product-wise orders/revenue + pincode ────────
+    const orderRows: any[] = [];
+    for (let page = 0; page < 3; page++) {
+      const { data, error } = await sb.from('orders')
+        .select('id, status, total_amount, shipping_address')
+        .gte('created_at', f).lte('created_at', t)
+        .order('created_at', { ascending: true })
+        .range(page * PAGE, page * PAGE + PAGE - 1);
+      if (error) break;
+      orderRows.push(...(data ?? []));
+      if (!data || data.length < PAGE) break;
+    }
+    const isCancelled = (st: any) => /cancel/i.test(String(st ?? ''));
+    const isProblem = (st: any) => /cancel|return|rto|fail/i.test(String(st ?? ''));
+    const goodOrderIds = new Set(orderRows.filter((o) => !isCancelled(o.status)).map((o) => o.id));
+
+    const orderAgg = new Map<string, { orders: Set<string>; units: number; revenue: number }>();
+    for (const ids of chunk(orderRows.map((o) => o.id as string), 100)) {
+      const { data } = await sb.from('order_items').select('order_id, product_id, quantity, price').in('order_id', ids);
+      for (const it of data ?? []) {
+        if (!it.product_id || !goodOrderIds.has(it.order_id)) continue;
+        let a = orderAgg.get(it.product_id);
+        if (!a) { a = { orders: new Set(), units: 0, revenue: 0 }; orderAgg.set(it.product_id, a); }
+        a.orders.add(it.order_id);
+        a.units += Number(it.quantity) || 0;
+        a.revenue += (Number(it.quantity) || 0) * (Number(it.price) || 0);
+      }
+    }
+    for (const id of Array.from(orderAgg.keys())) getP(id);
+
+    const pinMap = new Map<string, { pincode: string; place: string; orders: number; revenue: number; problems: number }>();
+    for (const o of orderRows) {
+      const a = o.shipping_address ?? {};
+      const pin = String(a.pincode ?? a.pin_code ?? a.zip ?? a.postal_code ?? '').trim();
+      if (!pin) continue;
+      let r = pinMap.get(pin);
+      if (!r) { r = { pincode: pin, place: [a.city, a.state].filter(Boolean).join(', '), orders: 0, revenue: 0, problems: 0 }; pinMap.set(pin, r); }
+      r.orders += 1;
+      if (!isCancelled(o.status)) r.revenue += Number(o.total_amount) || 0;
+      if (isProblem(o.status)) r.problems += 1;
+    }
+    const pincodes = Array.from(pinMap.values()).sort((a, b) => b.orders - a.orders).slice(0, 40);
+
+    // ── cart value bands (checkout sessions) ───────────────────────────
+    const bands = [
+      { name: 'Under ₹500', min: 0, max: 500 }, { name: '₹500-1,000', min: 500, max: 1000 },
+      { name: '₹1,000-2,000', min: 1000, max: 2000 }, { name: '₹2,000-5,000', min: 2000, max: 5000 },
+      { name: '₹5,000+', min: 5000, max: Infinity },
+    ].map((b) => ({ name: b.name, checkouts: 0, purchased: 0, min: b.min, max: b.max }));
+    for (const [sid, cv] of Array.from(sessionCartValue.entries())) {
+      const b = bands.find((x) => cv >= x.min && cv < x.max);
+      if (!b) continue;
+      b.checkouts += 1;
+      if (sessionsBuy.has(sid)) b.purchased += 1;
+    }
+
+    // ── pichla period (same length) for comparison arrows ──────────────
+    const span = to.getTime() - from.getTime();
+    const prevFrom = new Date(from.getTime() - span).toISOString();
+    let prev: ReturnType<typeof summarize> | null = null;
+    try {
+      const pr = await fetchAll(
+        (cols) => (a, b) =>
+          sb.from('activity_events').select(cols)
+            .in('event_type', ['add_to_cart', 'checkout_start', 'purchase'])
+            .gte('created_at', prevFrom).lt('created_at', f)
+            .order('created_at', { ascending: true }).range(a, b),
+        'session_id, user_id, event_type, metadata, visitor_id',
+        'session_id, user_id, event_type, metadata',
+        10
+      );
+      prev = summarize(pr.rows);
+    } catch { prev = null; }
+
+    // ── abandoned carts that have a phone number (free wa.me link) ─────
+    let abandonedCarts: any[] = [];
+    try {
+      const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.mishaboutique.com';
+      const { data } = await sb.from('abandoned_carts')
+        .select('id, email, phone, items, cart_value, last_activity_at')
+        .eq('recovered', false).not('phone', 'is', null)
+        .gte('last_activity_at', f).lte('last_activity_at', t)
+        .order('last_activity_at', { ascending: false }).limit(50);
+      abandonedCarts = (data ?? []).map((c: any) => {
+        let digits = String(c.phone ?? '').replace(/\D/g, '');
+        if (digits.startsWith('91') && digits.length === 12) digits = digits.slice(2);
+        if (digits.startsWith('0') && digits.length === 11) digits = digits.slice(1);
+        const valid = /^[6-9][0-9]{9}$/.test(digits);
+        const names = (Array.isArray(c.items) ? c.items : []).slice(0, 3).map((it: any) => it?.product_name || it?.name || 'Item');
+        const msg = `Hello, this is Misha Boutique. We noticed you left ${names.length > 1 ? 'some items' : 'an item'} in your cart${c.cart_value ? ` (Rs ${c.cart_value})` : ''}. You can complete your order here: ${siteUrl}/cart-link/${c.id}`;
+        return {
+          id: c.id, email: c.email ?? null, phone: valid ? digits : null,
+          cartValue: Number(c.cart_value) || 0, items: names, lastActivity: c.last_activity_at,
+          waUrl: valid ? `https://wa.me/91${digits}?text=${encodeURIComponent(msg)}` : null,
+        };
+      });
+    } catch { abandonedCarts = []; }
+
     // product names for the products that actually show up in cart/checkout
     // (+ top viewed ones) -- one query, capped.
     const ranked = Array.from(products.entries())
-      .sort((a, b) => (b[1].atcEvents + b[1].coV.size) - (a[1].atcEvents + a[1].coV.size) || b[1].views.size - a[1].views.size)
+      .sort((a, b) =>
+        (b[1].atcEvents + b[1].coV.size + (orderAgg.get(b[0])?.orders.size ?? 0)) - (a[1].atcEvents + a[1].coV.size + (orderAgg.get(a[0])?.orders.size ?? 0)) ||
+        b[1].views.size - a[1].views.size)
       .slice(0, 100);
     const ids = ranked.map(([id]) => id);
     const { data: prows } = ids.length
-      ? await sb.from('products').select('id, name, slug').in('id', ids)
-      : { data: [] as { id: string; name: string; slug: string }[] };
+      ? await sb.from('products').select('id, name, slug, images').in('id', ids)
+      : { data: [] as { id: string; name: string; slug: string; images: string[] | null }[] };
     const pmap = new Map((prows ?? []).map((p: any) => [p.id, p]));
 
     const productRows = ranked.map(([id, p]) => ({
       productId: id,
       name: pmap.get(id)?.name ?? 'Unknown product',
       slug: pmap.get(id)?.slug ?? null,
+      image: (pmap.get(id) as any)?.images?.[0] ?? null,
+      orders: orderAgg.get(id)?.orders.size ?? 0,
+      units: orderAgg.get(id)?.units ?? 0,
+      revenue: Math.round(orderAgg.get(id)?.revenue ?? 0),
       views: p.views.size,
       atcEvents: p.atcEvents,
       atcQty: p.atcQty,
@@ -272,16 +397,17 @@ export async function GET(req: Request) {
       return v.region || 'Unknown';
     };
     const group = (label: (v: V) => string) => {
-      const m = new Map<string, { name: string; visitors: number; carted: number; checkout: number; purchased: number; atcEvents: number }>();
+      const m = new Map<string, { name: string; visitors: number; carted: number; checkout: number; purchased: number; atcEvents: number; revenue: number }>();
       for (const v of Array.from(visitors.values())) {
         const name = label(v);
         let r = m.get(name);
-        if (!r) { r = { name, visitors: 0, carted: 0, checkout: 0, purchased: 0, atcEvents: 0 }; m.set(name, r); }
+        if (!r) { r = { name, visitors: 0, carted: 0, checkout: 0, purchased: 0, atcEvents: 0, revenue: 0 }; m.set(name, r); }
         r.visitors += 1;
         if (v.atcEvents > 0) r.carted += 1;
         if (v.checkoutSessions.size > 0) r.checkout += 1;
         if (v.purchased) r.purchased += 1;
         r.atcEvents += v.atcEvents;
+        r.revenue += Math.round(v.revenue);
       }
       return Array.from(m.values())
         .sort((a, b) => b.checkout - a.checkout || b.carted - a.carted || b.visitors - a.visitors)
@@ -363,6 +489,10 @@ export async function GET(req: Request) {
       visitors: visitorRows,
       hourly,
       daily: dailyRows,
+      prev,
+      cartBands: bands.map(({ name, checkouts, purchased }) => ({ name, checkouts, purchased })),
+      pincodes,
+      abandonedCarts,
       devices: group((v) => v.device || 'Unknown'),
       sources: group((v) => v.source || 'Unknown'),
     };

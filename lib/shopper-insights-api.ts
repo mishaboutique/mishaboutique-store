@@ -7,12 +7,17 @@ export interface LocationRow {
   checkout: number; // begin checkout karne wale log
   purchased: number; // order karne wale log
   atcEvents: number; // total add-to-cart clicks
+  revenue: number; // order value (INR) of these visitors
 }
 
 export interface ProductRow {
   productId: string;
   name: string;
   slug: string | null;
+  image: string | null;
+  orders: number; // real orders (cancelled excluded)
+  units: number;
+  revenue: number;
   views: number; // unique sessions
   atcEvents: number;
   atcQty: number;
@@ -41,7 +46,31 @@ export interface VisitorRow {
   products: string[];
 }
 
+export interface PeriodTotals {
+  atcEvents: number;
+  atcVisitors: number;
+  checkoutVisitors: number;
+  purchaseVisitors: number;
+  revenue: number;
+}
+
+export interface AbandonedCartRow {
+  id: string;
+  email: string | null;
+  phone: string | null;
+  cartValue: number;
+  items: string[];
+  lastActivity: string;
+  waUrl: string | null;
+}
+
+export interface PincodeRow { pincode: string; place: string; orders: number; revenue: number; problems: number }
+
 export interface ShopperInsights {
+  prev: PeriodTotals | null;
+  cartBands: { name: string; checkouts: number; purchased: number }[];
+  pincodes: PincodeRow[];
+  abandonedCarts: AbandonedCartRow[];
   range: { from: string; to: string };
   generatedAt: string;
   truncated: boolean;

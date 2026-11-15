@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ShoppingCart, CreditCard, CheckCircle2, Users, Repeat, MapPin, Lightbulb, RefreshCw,
-  AlertTriangle, Download, IndianRupee, PackageSearch,
+  AlertTriangle, Download, IndianRupee, PackageSearch, ArrowUp, ArrowDown, ArrowUpDown, MessageCircle, Copy,
 } from 'lucide-react';
 import { startOfDay, endOfDay, subDays, format } from 'date-fns';
 import { toast } from 'sonner';
@@ -11,19 +11,64 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { DateRangePicker, SimpleRange } from '@/components/admin/date-range-picker';
 import { formatINR } from '@/lib/format';
 import {
-  fetchShopperInsights, ShopperInsights, LocationRow, VisitorRow,
+  fetchShopperInsights, ShopperInsights, LocationRow, VisitorRow, PeriodTotals,
 } from '@/lib/shopper-insights-api';
 
 const pct = (a: number, b: number) => (b > 0 ? Math.round((a / b) * 1000) / 10 : 0);
 
-function Card({ icon, label, value, hint, tone }: {
-  icon: React.ReactNode; label: string; value: string | number; hint?: string; tone?: 'warn' | 'good';
+type SortState = { key: string; dir: 'asc' | 'desc' };
+
+/** Click a column header -> biggest number on top. Click again -> smallest on top. */
+function useSort<T extends Record<string, any>>(rows: T[], initial: SortState) {
+  const [sort, setSort] = useState<SortState>(initial);
+  const sorted = useMemo(() => {
+    const mul = sort.dir === 'desc' ? -1 : 1;
+    return [...rows].sort((a, b) => {
+      const x = a[sort.key], y = b[sort.key];
+      if (typeof x === 'string' || typeof y === 'string') return String(x ?? '').localeCompare(String(y ?? '')) * mul;
+      return ((Number(x) || 0) - (Number(y) || 0)) * mul;
+    });
+  }, [rows, sort]);
+  const toggle = (key: string) =>
+    setSort((s) => (s.key === key ? { key, dir: s.dir === 'desc' ? 'asc' : 'desc' } : { key, dir: 'desc' }));
+  return { sorted, sort, toggle };
+}
+
+function SortTh({ label, k, sort, toggle, align = 'right', className = '' }: {
+  label: string; k: string; sort: SortState; toggle: (k: string) => void; align?: 'left' | 'right'; className?: string;
+}) {
+  const active = sort.key === k;
+  return (
+    <th className={`py-2 ${align === 'right' ? 'text-right' : 'text-left'} ${className}`}>
+      <button type="button" onClick={() => toggle(k)}
+        className={`inline-flex items-center gap-0.5 whitespace-nowrap text-xs font-medium hover:text-foreground ${active ? 'text-foreground' : 'text-muted-foreground'}`}>
+        {label}
+        {active ? (sort.dir === 'desc' ? <ArrowDown className="h-3 w-3" /> : <ArrowUp className="h-3 w-3" />) : <ArrowUpDown className="h-3 w-3 opacity-40" />}
+      </button>
+    </th>
+  );
+}
+
+function DeltaBadge({ now, before }: { now: number; before?: number }) {
+  if (before === undefined) return null;
+  if (before === 0 && now === 0) return null;
+  const change = before === 0 ? 100 : Math.round(((now - before) / before) * 100);
+  const up = change >= 0;
+  return (
+    <span className={`ml-1 rounded px-1 py-0.5 text-[10px] font-medium ${up ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}`}>
+      {up ? '▲' : '▼'} {Math.abs(change)}%
+    </span>
+  );
+}
+
+function Card({ icon, label, value, hint, tone, delta }: {
+  icon: React.ReactNode; label: string; value: string | number; hint?: string; tone?: 'warn' | 'good'; delta?: React.ReactNode;
 }) {
   const cls = tone === 'warn' ? 'border-amber-300 bg-amber-50' : tone === 'good' ? 'border-emerald-300 bg-emerald-50' : 'border-border/60 bg-card';
   return (
     <div className={`min-w-0 rounded-xl border p-3 shadow-sm sm:p-4 ${cls}`}>
       <div className="flex items-center gap-1.5 text-xs text-muted-foreground">{icon}<span className="truncate">{label}</span></div>
-      <p className="mt-2 truncate text-lg font-semibold sm:text-xl">{value}</p>
+      <p className="mt-2 truncate text-lg font-semibold sm:text-xl">{value}{delta}</p>
       {hint && <p className="mt-0.5 text-[11px] text-muted-foreground">{hint}</p>}
     </div>
   );
@@ -55,25 +100,242 @@ function Pills<T extends string>({ value, options, onChange }: { value: T; optio
 }
 
 function LocationTable({ rows }: { rows: LocationRow[] }) {
+  const enriched = useMemo(() => rows.map((r) => ({ ...r, rate: pct(r.purchased, r.carted) })), [rows]);
+  const { sorted, sort, toggle } = useSort(enriched, { key: 'checkout', dir: 'desc' });
   if (!rows.length) return <p className="text-sm text-muted-foreground">Is period me data nahi hai.</p>;
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b text-left text-xs text-muted-foreground">
-            <th className="py-2 pr-3">Naam</th><th className="px-2 text-right">Visitors</th><th className="px-2 text-right">Cart</th>
-            <th className="px-2 text-right">Checkout</th><th className="px-2 text-right">Order</th><th className="pl-2 text-right">Cart→Order</th>
+          <tr className="border-b">
+            <SortTh label="Naam" k="name" sort={sort} toggle={toggle} align="left" className="pr-3" />
+            <SortTh label="Visitors" k="visitors" sort={sort} toggle={toggle} className="px-2" />
+            <SortTh label="Cart" k="carted" sort={sort} toggle={toggle} className="px-2" />
+            <SortTh label="Checkout" k="checkout" sort={sort} toggle={toggle} className="px-2" />
+            <SortTh label="Order" k="purchased" sort={sort} toggle={toggle} className="px-2" />
+            <SortTh label="Cart→Order" k="rate" sort={sort} toggle={toggle} className="px-2" />
+            <SortTh label="Revenue" k="revenue" sort={sort} toggle={toggle} className="pl-2" />
           </tr>
         </thead>
         <tbody>
-          {rows.map((r) => (
+          {sorted.map((r) => (
             <tr key={r.name} className="border-b border-border/40">
               <td className="py-2 pr-3 font-medium">{r.name}</td>
               <td className="px-2 text-right">{r.visitors}</td>
               <td className="px-2 text-right">{r.carted}</td>
               <td className="px-2 text-right">{r.checkout}</td>
               <td className="px-2 text-right">{r.purchased}</td>
-              <td className="pl-2 text-right text-muted-foreground">{pct(r.purchased, r.carted)}%</td>
+              <td className="px-2 text-right text-muted-foreground">{r.rate}%</td>
+              <td className="pl-2 text-right">{r.revenue ? formatINR(r.revenue) : '-'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ProductsTable({ products }: { products: ShopperInsights['products'] }) {
+  const enriched = useMemo(() => products.map((p) => ({
+    ...p,
+    viewToCart: pct(p.atcVisitors, p.views),
+    cartToCheckout: pct(p.checkoutVisitors, p.atcVisitors),
+  })), [products]);
+  const { sorted, sort, toggle } = useSort(enriched, { key: 'atcVisitors', dir: 'desc' });
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b">
+            <SortTh label="Product" k="name" sort={sort} toggle={toggle} align="left" className="pr-3" />
+            <SortTh label="Views" k="views" sort={sort} toggle={toggle} className="px-2" />
+            <SortTh label="Cart (clicks)" k="atcEvents" sort={sort} toggle={toggle} className="px-2" />
+            <SortTh label="Cart (log)" k="atcVisitors" sort={sort} toggle={toggle} className="px-2" />
+            <SortTh label="Checkout (log)" k="checkoutVisitors" sort={sort} toggle={toggle} className="px-2" />
+            <SortTh label="Orders" k="orders" sort={sort} toggle={toggle} className="px-2" />
+            <SortTh label="Revenue" k="revenue" sort={sort} toggle={toggle} className="px-2" />
+            <SortTh label="View→Cart" k="viewToCart" sort={sort} toggle={toggle} className="px-2" />
+            <SortTh label="Cart→Checkout" k="cartToCheckout" sort={sort} toggle={toggle} className="pl-2" />
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map((p) => {
+            const href = p.slug ? `/product/${p.slug}` : null;
+            const thumb = p.image ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={p.image} alt="" loading="lazy" className="h-10 w-10 shrink-0 rounded-md border border-border/50 object-cover" />
+            ) : (
+              <div className="h-10 w-10 shrink-0 rounded-md bg-muted" />
+            );
+            return (
+              <tr key={p.productId} className="border-b border-border/40 align-middle">
+                <td className="py-2 pr-3">
+                  <div className="flex min-w-[220px] items-center gap-2.5">
+                    {href ? <a href={href} target="_blank" rel="noopener noreferrer">{thumb}</a> : thumb}
+                    <div className="min-w-0">
+                      {href ? (
+                        <a href={href} target="_blank" rel="noopener noreferrer" className="line-clamp-2 font-medium text-primary hover:underline">{p.name}</a>
+                      ) : <p className="line-clamp-2 font-medium">{p.name}</p>}
+                      {p.colors.length > 0 && <p className="text-[11px] text-muted-foreground">{p.colors.map((c) => `${c.name} ${c.value}`).join(' · ')}</p>}
+                    </div>
+                  </div>
+                </td>
+                <td className="px-2 text-right">{p.views}</td>
+                <td className="px-2 text-right">{p.atcEvents}</td>
+                <td className="px-2 text-right">{p.atcVisitors}</td>
+                <td className="px-2 text-right">{p.checkoutVisitors}</td>
+                <td className="px-2 text-right">{p.orders}</td>
+                <td className="px-2 text-right">{p.revenue ? formatINR(p.revenue) : '-'}</td>
+                <td className="px-2 text-right text-muted-foreground">{p.viewToCart}%</td>
+                <td className="pl-2 text-right text-muted-foreground">{p.cartToCheckout}%</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function VisitorsTable({ rows }: { rows: VisitorRow[] }) {
+  const enriched = useMemo(() => rows.map((v) => ({
+    ...v,
+    statusRank: v.purchased ? 1 : v.checkoutStarted ? 3 : 2,
+    place: [v.city, v.state].filter((x) => x !== 'Unknown').join(', ') || 'Unknown',
+  })), [rows]);
+  const { sorted, sort, toggle } = useSort(enriched, { key: 'visits', dir: 'desc' });
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b">
+            <SortTh label="Visitor" k="label" sort={sort} toggle={toggle} align="left" className="pr-3" />
+            <SortTh label="Visits" k="visits" sort={sort} toggle={toggle} className="px-2" />
+            <SortTh label="Din" k="days" sort={sort} toggle={toggle} className="px-2" />
+            <SortTh label="Cart" k="atcEvents" sort={sort} toggle={toggle} className="px-2" />
+            <SortTh label="Status" k="statusRank" sort={sort} toggle={toggle} align="left" className="px-2" />
+            <SortTh label="Cart value" k="cartValue" sort={sort} toggle={toggle} className="px-2" />
+            <SortTh label="Location" k="place" sort={sort} toggle={toggle} align="left" className="px-2" />
+            <th className="px-2 text-left text-xs font-medium text-muted-foreground">Device · Source</th>
+            <SortTh label="Last seen" k="lastSeen" sort={sort} toggle={toggle} align="left" className="px-2" />
+            <th className="pl-2 text-left text-xs font-medium text-muted-foreground">Products</th>
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map((v) => (
+            <tr key={v.id + v.firstSeen} className="border-b border-border/40 align-top">
+              <td className="py-2 pr-3 font-medium">{v.label}</td>
+              <td className="px-2 text-right">{v.visits}</td>
+              <td className="px-2 text-right">{v.days}</td>
+              <td className="px-2 text-right">{v.atcEvents}</td>
+              <td className="px-2 whitespace-nowrap">
+                {v.purchased ? <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs text-emerald-800">Order kiya</span>
+                  : v.checkoutStarted ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-800">Checkout chhoda</span>
+                  : <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">Sirf cart</span>}
+              </td>
+              <td className="px-2 text-right">{v.cartValue ? formatINR(v.cartValue) : '-'}</td>
+              <td className="px-2 whitespace-nowrap">{v.place}</td>
+              <td className="px-2 whitespace-nowrap text-muted-foreground">{v.device} · {v.source}</td>
+              <td className="px-2 whitespace-nowrap text-muted-foreground">{format(new Date(v.lastSeen), 'dd MMM, hh:mm a')}</td>
+              <td className="pl-2 text-xs text-muted-foreground">{v.products.join(', ')}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function AbandonedCartsCard({ carts }: { carts: ShopperInsights['abandonedCarts'] }) {
+  return (
+    <Section title="Checkout chhodne wale (phone number ke saath)" right={<MessageCircle className="h-4 w-4 text-emerald-600" />}>
+      {carts.length === 0 ? (
+        <p className="text-sm text-muted-foreground">Is period me aisa koi cart nahi jisme phone number ho. Phone tabhi milta hai jab shopper ne checkout form me number daala ho.</p>
+      ) : (
+        <div className="grid gap-2">
+          {carts.map((c) => (
+            <div key={c.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/40 p-2.5 text-sm">
+              <div className="min-w-0">
+                <p className="font-medium">{c.items.join(', ') || 'Cart'} <span className="text-muted-foreground">· {formatINR(c.cartValue)}</span></p>
+                <p className="text-xs text-muted-foreground">{c.email ?? 'No email'} · {c.phone ? `+91 ${c.phone}` : 'Phone valid nahi'} · {format(new Date(c.lastActivity), 'dd MMM, hh:mm a')}</p>
+              </div>
+              {c.waUrl && (
+                <a href={c.waUrl} target="_blank" rel="noopener noreferrer"
+                  className="flex items-center gap-1 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700">
+                  <MessageCircle className="h-3.5 w-3.5" /> WhatsApp bhejo
+                </a>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      <p className="mt-2 text-[11px] text-muted-foreground">Free wa.me link hai: button dabate hi WhatsApp me message ready khulta hai, aapko bas Send dabana hai. Detail ke liye Abandoned Carts section bhi dekho.</p>
+    </Section>
+  );
+}
+
+function UtmBuilder() {
+  const [base, setBase] = useState('https://www.mishaboutique.com');
+  const [source, setSource] = useState('instagram');
+  const [medium, setMedium] = useState('social');
+  const [campaign, setCampaign] = useState('');
+  const link = useMemo(() => {
+    try {
+      const u = new URL(base);
+      u.searchParams.set('utm_source', source.trim().toLowerCase() || 'direct');
+      if (medium.trim()) u.searchParams.set('utm_medium', medium.trim().toLowerCase());
+      if (campaign.trim()) u.searchParams.set('utm_campaign', campaign.trim().toLowerCase().replace(/\s+/g, '-'));
+      return u.toString();
+    } catch { return ''; }
+  }, [base, source, medium, campaign]);
+  const inp = 'w-full rounded-md border border-border/60 bg-background px-2 py-1.5 text-sm';
+  return (
+    <Section title="Tracking link banao (UTM)">
+      <p className="mb-3 text-xs text-muted-foreground">Instagram bio, WhatsApp, Facebook ya ads me ye link use karo. Tab Source table me dikhega ki kahan se kitne cart aur order aaye.</p>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <label className="text-xs">Page link<input className={inp} value={base} onChange={(e) => setBase(e.target.value)} /></label>
+        <label className="text-xs">Source (instagram, whatsapp, facebook...)<input className={inp} value={source} onChange={(e) => setSource(e.target.value)} /></label>
+        <label className="text-xs">Medium (social, paid, email...)<input className={inp} value={medium} onChange={(e) => setMedium(e.target.value)} /></label>
+        <label className="text-xs">Campaign (optional, jaise diwali-sale)<input className={inp} value={campaign} onChange={(e) => setCampaign(e.target.value)} /></label>
+      </div>
+      <div className="mt-3 flex items-start gap-2 rounded-lg bg-muted/50 p-2.5">
+        <p className="min-w-0 flex-1 break-all text-xs">{link || 'Sahi link daalo'}</p>
+        <button type="button" disabled={!link}
+          onClick={() => { navigator.clipboard.writeText(link).then(() => toast.success('Link copy ho gaya')); }}
+          className="flex shrink-0 items-center gap-1 rounded-md border border-border/60 bg-background px-2 py-1 text-xs hover:bg-muted">
+          <Copy className="h-3 w-3" /> Copy
+        </button>
+      </div>
+    </Section>
+  );
+}
+
+function PincodeTable({ rows }: { rows: ShopperInsights['pincodes'] }) {
+  const enriched = useMemo(() => rows.map((r) => ({ ...r, problemRate: pct(r.problems, r.orders) })), [rows]);
+  const { sorted, sort, toggle } = useSort(enriched, { key: 'orders', dir: 'desc' });
+  if (!rows.length) return <p className="text-sm text-muted-foreground">Is period me orders nahi hain.</p>;
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b">
+            <SortTh label="Pincode" k="pincode" sort={sort} toggle={toggle} align="left" className="pr-3" />
+            <SortTh label="Jagah" k="place" sort={sort} toggle={toggle} align="left" className="px-2" />
+            <SortTh label="Orders" k="orders" sort={sort} toggle={toggle} className="px-2" />
+            <SortTh label="Revenue" k="revenue" sort={sort} toggle={toggle} className="px-2" />
+            <SortTh label="Cancel/Return" k="problems" sort={sort} toggle={toggle} className="px-2" />
+            <SortTh label="Problem %" k="problemRate" sort={sort} toggle={toggle} className="pl-2" />
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map((r) => (
+            <tr key={r.pincode} className="border-b border-border/40">
+              <td className="py-2 pr-3 font-medium">{r.pincode}</td>
+              <td className="px-2 text-muted-foreground">{r.place || '-'}</td>
+              <td className="px-2 text-right">{r.orders}</td>
+              <td className="px-2 text-right">{formatINR(r.revenue)}</td>
+              <td className="px-2 text-right">{r.problems}</td>
+              <td className={`pl-2 text-right ${r.problemRate >= 30 && r.orders >= 3 ? 'font-semibold text-red-600' : 'text-muted-foreground'}`}>{r.problemRate}%</td>
             </tr>
           ))}
         </tbody>
@@ -147,7 +409,7 @@ function downloadCsv(rows: VisitorRow[]) {
   URL.revokeObjectURL(a.href);
 }
 
-type View = 'products' | 'location' | 'visitors' | 'time';
+type View = 'products' | 'location' | 'visitors' | 'time' | 'tools';
 
 /**
  * Admin > Analytics > Shopper Insights. Answers:
@@ -184,7 +446,7 @@ export default function ShopperInsightsPanel() {
 
   const header = (
     <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-      <p className="text-sm text-muted-foreground">Cart, checkout, location aur repeat visitors, date ke hisaab se.</p>
+      <p className="text-sm text-muted-foreground">Cart, checkout, location aur repeat visitors. Arrow (▲▼) pichle barabar period se compare karta hai. Table ke header par click karke sort karo.</p>
       <div className="flex items-center gap-2">
         <DateRangePicker value={range} onChange={setRange} />
         <button type="button" onClick={load} disabled={loading}
@@ -207,6 +469,7 @@ export default function ShopperInsightsPanel() {
   if (!data) return <div>{header}<p className="text-sm text-muted-foreground">Data load nahi ho paya.</p></div>;
 
   const t = data.totals;
+  const pv: PeriodTotals | undefined = data.prev ?? undefined;
   const funnelMax = Math.max(1, ...data.funnel.map((f) => f.value));
   const hourMax = Math.max(1, ...data.hourly.map((h) => h.atc));
 
@@ -233,9 +496,9 @@ export default function ShopperInsightsPanel() {
       )}
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Card icon={<ShoppingCart className="h-3.5 w-3.5" />} label="Add to cart (clicks)" value={t.atcEvents} hint={`${t.atcVisitors} alag log, ${t.atcQty} pieces`} />
-        <Card icon={<CreditCard className="h-3.5 w-3.5" />} label="Begin checkout (log)" value={t.checkoutVisitors} hint={`Cart→Checkout ${pct(t.checkoutVisitors, t.atcVisitors)}%`} />
-        <Card icon={<CheckCircle2 className="h-3.5 w-3.5" />} label="Order kiya (log)" value={t.purchaseVisitors} hint={`Checkout→Order ${pct(t.purchaseVisitors, t.checkoutVisitors)}% · ${formatINR(t.revenue)}`} tone="good" />
+        <Card icon={<ShoppingCart className="h-3.5 w-3.5" />} label="Add to cart (clicks)" value={t.atcEvents} hint={`${t.atcVisitors} alag log, ${t.atcQty} pieces`} delta={<DeltaBadge now={t.atcEvents} before={pv?.atcEvents} />} />
+        <Card icon={<CreditCard className="h-3.5 w-3.5" />} label="Begin checkout (log)" value={t.checkoutVisitors} delta={<DeltaBadge now={t.checkoutVisitors} before={pv?.checkoutVisitors} />} hint={`Cart→Checkout ${pct(t.checkoutVisitors, t.atcVisitors)}%`} />
+        <Card icon={<CheckCircle2 className="h-3.5 w-3.5" />} label="Order kiya (log)" value={t.purchaseVisitors} delta={<DeltaBadge now={t.purchaseVisitors} before={pv?.purchaseVisitors} />} hint={`Checkout→Order ${pct(t.purchaseVisitors, t.checkoutVisitors)}% · ${formatINR(t.revenue)}`} tone="good" />
         <Card icon={<IndianRupee className="h-3.5 w-3.5" />} label="Checkout chhoda (abandoned)" value={t.abandonedVisitors} hint={`≈ ${formatINR(t.abandonedValue)} ka cart`} tone={t.abandonedVisitors ? 'warn' : undefined} />
         <Card icon={<Users className="h-3.5 w-3.5" />} label="Product dekhne wale" value={t.productViewVisitors} />
         <Card icon={<Repeat className="h-3.5 w-3.5" />} label="Wapas aane wale" value={data.repeat.repeatVisitors} hint={`${data.repeat.repeatRate}% visitors · naye ${data.repeat.newVisitors}`} />
@@ -270,39 +533,12 @@ export default function ShopperInsightsPanel() {
       <Pills value={view} onChange={setView} options={[
         { id: 'products', label: 'Products' }, { id: 'location', label: 'Location' },
         { id: 'visitors', label: 'Visitors / Repeat' }, { id: 'time', label: 'Time, Device, Source' },
+        { id: 'tools', label: 'Cart value, Pincode, UTM' },
       ]} />
 
       {view === 'products' && (
         <Section title="Product wise: kitna cart / checkout" right={<PackageSearch className="h-4 w-4 text-muted-foreground" />}>
-          {data.products.length === 0 ? <p className="text-sm text-muted-foreground">Is period me koi product cart me nahi gaya.</p> : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b text-left text-xs text-muted-foreground">
-                    <th className="py-2 pr-3">Product</th><th className="px-2 text-right">Views</th><th className="px-2 text-right">Cart (clicks)</th>
-                    <th className="px-2 text-right">Cart (log)</th><th className="px-2 text-right">Checkout (log)</th>
-                    <th className="px-2 text-right">View→Cart</th><th className="pl-2 text-right">Cart→Checkout</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.products.map((p) => (
-                    <tr key={p.productId} className="border-b border-border/40 align-top">
-                      <td className="py-2 pr-3">
-                        <p className="font-medium">{p.name}</p>
-                        {p.colors.length > 0 && <p className="text-[11px] text-muted-foreground">{p.colors.map((c) => `${c.name} ${c.value}`).join(' · ')}</p>}
-                      </td>
-                      <td className="px-2 text-right">{p.views}</td>
-                      <td className="px-2 text-right">{p.atcEvents}</td>
-                      <td className="px-2 text-right">{p.atcVisitors}</td>
-                      <td className="px-2 text-right">{p.checkoutVisitors}</td>
-                      <td className="px-2 text-right text-muted-foreground">{pct(p.atcVisitors, p.views)}%</td>
-                      <td className="pl-2 text-right text-muted-foreground">{pct(p.checkoutVisitors, p.atcVisitors)}%</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+          {data.products.length === 0 ? <p className="text-sm text-muted-foreground">Is period me koi product cart me nahi gaya.</p> : <ProductsTable products={data.products} />}
         </Section>
       )}
 
@@ -311,6 +547,8 @@ export default function ShopperInsightsPanel() {
           <LocationTable rows={data.locations[locBy]} />
         </Section>
       )}
+
+      {view === 'visitors' && <AbandonedCartsCard carts={data.abandonedCarts} />}
 
       {view === 'visitors' && (
         <Section
@@ -324,40 +562,33 @@ export default function ShopperInsightsPanel() {
             </div>
           }
         >
-          {visitors.length === 0 ? <p className="text-sm text-muted-foreground">Is filter me koi visitor nahi.</p> : (
+          {visitors.length === 0 ? <p className="text-sm text-muted-foreground">Is filter me koi visitor nahi.</p> : <VisitorsTable rows={visitors} />}
+          <p className="mt-2 text-[11px] text-muted-foreground">Visitor ek browser hota hai. Agar koi alag phone/browser use kare to alag gina jayega. Email sirf tab dikhta hai jab usne order kiya ho.</p>
+        </Section>
+      )}
+
+      {view === 'tools' && (
+        <>
+          <Section title="Cart value ke hisaab se checkout aur order">
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b text-left text-xs text-muted-foreground">
-                    <th className="py-2 pr-3">Visitor</th><th className="px-2 text-right">Visits</th><th className="px-2 text-right">Din</th>
-                    <th className="px-2 text-right">Cart</th><th className="px-2">Status</th><th className="px-2">Location</th>
-                    <th className="px-2">Device · Source</th><th className="px-2">Last seen</th><th className="pl-2">Products</th>
-                  </tr>
-                </thead>
+                <thead><tr className="border-b text-left text-xs text-muted-foreground"><th className="py-2">Cart value</th><th className="text-right">Checkout</th><th className="text-right">Order</th><th className="text-right">Order %</th></tr></thead>
                 <tbody>
-                  {visitors.map((v) => (
-                    <tr key={v.id + v.firstSeen} className="border-b border-border/40 align-top">
-                      <td className="py-2 pr-3 font-medium">{v.label}</td>
-                      <td className="px-2 text-right">{v.visits}</td>
-                      <td className="px-2 text-right">{v.days}</td>
-                      <td className="px-2 text-right">{v.atcEvents}</td>
-                      <td className="px-2 whitespace-nowrap">
-                        {v.purchased ? <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs text-emerald-800">Order kiya</span>
-                          : v.checkoutStarted ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-800">Checkout chhoda {v.cartValue ? `· ${formatINR(v.cartValue)}` : ''}</span>
-                          : <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">Sirf cart</span>}
-                      </td>
-                      <td className="px-2 whitespace-nowrap">{[v.city, v.state].filter((x) => x !== 'Unknown').join(', ') || 'Unknown'}</td>
-                      <td className="px-2 whitespace-nowrap text-muted-foreground">{v.device} · {v.source}</td>
-                      <td className="px-2 whitespace-nowrap text-muted-foreground">{format(new Date(v.lastSeen), 'dd MMM, hh:mm a')}</td>
-                      <td className="pl-2 text-xs text-muted-foreground">{v.products.join(', ')}</td>
+                  {data.cartBands.map((b) => (
+                    <tr key={b.name} className="border-b border-border/40">
+                      <td className="py-2 font-medium">{b.name}</td><td className="text-right">{b.checkouts}</td><td className="text-right">{b.purchased}</td>
+                      <td className="text-right text-muted-foreground">{pct(b.purchased, b.checkouts)}%</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-          )}
-          <p className="mt-2 text-[11px] text-muted-foreground">Visitor ek browser hota hai. Agar koi alag phone/browser use kare to alag gina jayega. Email sirf tab dikhta hai jab usne order kiya ho.</p>
-        </Section>
+          </Section>
+          <Section title="Pincode wise orders (delivery problem kahan hai)">
+            <PincodeTable rows={data.pincodes} />
+          </Section>
+          <UtmBuilder />
+        </>
       )}
 
       {view === 'time' && (
