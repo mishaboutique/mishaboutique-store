@@ -141,6 +141,53 @@ function getGeo(): Promise<Geo | null> {
   return Promise.race([geoPromise, new Promise<null>((res) => setTimeout(() => res(null), 1500))]);
 }
 
+// ── Admin "tracking band karo" switches ─────────────────────────────────────
+// Admin (Analytics > settings) kuch event types OFF kar sakta hai taaki DB na bhare.
+// Config /api/track-config se aata hai, browser me 30 min cache hota hai.
+// Sirf ye types check hote hain -- baaki events par koi extra kharcha nahi.
+const CONTROLLABLE_EVENTS = ['variant_switch', 'search', 'wishlist'];
+const CFG_KEY = 'saaj_track_cfg_v1';
+const CFG_TTL_MS = 30 * 60 * 1000;
+let cfgPromise: Promise<string[]> | null = null;
+
+function readCachedCfg(): string[] | null {
+  try {
+    const raw = window.localStorage.getItem(CFG_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (Date.now() - parsed.at > CFG_TTL_MS) return null;
+    return Array.isArray(parsed.disabled) ? parsed.disabled : null;
+  } catch {
+    return null;
+  }
+}
+
+function getDisabledEvents(): Promise<string[]> {
+  if (typeof window === 'undefined') return Promise.resolve([]);
+  const cached = readCachedCfg();
+  if (cached) return Promise.resolve(cached);
+  if (!cfgPromise) {
+    cfgPromise = fetch('/api/track-config')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        const disabled: string[] = Array.isArray(j?.disabled) ? j.disabled : [];
+        try {
+          window.localStorage.setItem(CFG_KEY, JSON.stringify({ at: Date.now(), disabled }));
+        } catch {}
+        return disabled;
+      })
+      .catch(() => [] as string[])
+      .finally(() => {
+        // 30 min baad dobara fetch ho sake
+        setTimeout(() => {
+          cfgPromise = null;
+        }, CFG_TTL_MS);
+      });
+  }
+  // 1.5s se zyada intezaar nahi; na mile to tracking chalne do.
+  return Promise.race([cfgPromise, new Promise<string[]>((res) => setTimeout(() => res([]), 1500))]);
+}
+
 /**
  * Fire-and-forget event log used by the Admin > Analytics dashboard for
  * sales trends, top products, conversion rate and customer behaviour.
@@ -148,6 +195,7 @@ function getGeo(): Promise<Geo | null> {
  */
 export async function trackEvent(eventType: ActivityEventType, options: TrackOptions = {}) {
   try {
+    if (CONTROLLABLE_EVENTS.includes(eventType) && (await getDisabledEvents()).includes(eventType)) return;
     const base = {
       session_id: getSessionId(),
       user_id: options.userId ?? null,

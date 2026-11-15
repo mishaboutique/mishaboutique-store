@@ -52,6 +52,66 @@ const TAB_OPTIONS: { value: Tab; label: string; icon: React.ReactNode }[] = [
 
 const HIDDEN_TABS_KEY = 'admin-analytics-hidden-tabs';
 
+function TrackingToggle() {
+  const [loaded, setLoaded] = useState(false);
+  const [on, setOn] = useState(true);
+  const [missing, setMissing] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/admin/tracking-settings')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (!alive || !j) return;
+        setOn(!(j.disabled ?? []).includes('variant_switch'));
+        setMissing(!!j.tableMissing);
+        setLoaded(true);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const change = async (v: boolean) => {
+    setSaving(true);
+    try {
+      const res = await fetch('/api/admin/tracking-settings', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ eventType: 'variant_switch', enabled: v }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j.error || 'Save nahi hua');
+      setOn(v);
+      toast.success(v ? 'Variant data jama hona chalu' : 'Variant data jama hona band (naye visitors par 30 min me lagu)');
+    } catch (e: any) {
+      toast.error(e.message || 'Save nahi hua');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="mt-4 border-t border-border/60 pt-3">
+      <p className="mb-1 text-sm font-semibold">Data jama karna (poori site)</p>
+      <p className="mb-2 text-xs text-muted-foreground">
+        OFF karoge to Variant Switch ka naya data Supabase me save nahi hoga. Purana data rahega.
+      </p>
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm">Variant Switch data jama karo</span>
+        <Switch checked={on} disabled={!loaded || saving || missing} onCheckedChange={change} />
+      </div>
+      {missing && (
+        <p className="mt-2 text-[11px] text-amber-700">
+          Pehle Supabase me 20261115020000_tracking_settings.sql run karo.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function TabBar({
   active,
   onChange,
@@ -112,6 +172,7 @@ function TabBar({
               })}
             </ul>
             <p className="mt-3 text-[11px] text-muted-foreground">Kam se kam 1 tab ON rehna zaroori hai.</p>
+            <TrackingToggle />
           </PopoverContent>
         </Popover>
       </div>
