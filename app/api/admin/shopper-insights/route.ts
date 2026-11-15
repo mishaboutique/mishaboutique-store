@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { verifyAdminToken, ADMIN_SESSION_COOKIE } from '@/lib/admin-auth';
 import { getSupabaseAdmin } from '@/lib/supabase-admin';
+import { fetchCapped } from '@/lib/fetch-capped';
 
 export const dynamic = 'force-dynamic';
 
@@ -451,6 +452,63 @@ export async function GET(req: Request) {
       .sort((a, b) => a[0].localeCompare(b[0]))
       .map(([day, r]) => ({ day, ...r }));
 
+    // ── Trending strip se kya mila (metadata.via_featured, lib/track-api.ts) ──
+    // Click = strip se khule product ka pehla product_view. Order = purchase jo us session me hua
+    // jisne strip se kuch click kiya (touch-attribution; ek session kai jagah touch kare to dono me ginta hai).
+    const FEATURED_LABELS: Record<string, string> = {
+      home: 'Home page (top)',
+      shop: 'Shop page',
+      category: 'Category page',
+      product: 'Product page',
+      similar: 'Similar products (mix)',
+    };
+    let featuredRows: {
+      placement: string; label: string; clicks: number; cartSessions: number;
+      checkoutSessions: number; orders: number; revenue: number;
+    }[] = [];
+    try {
+      const frows = await fetchCapped<any>(
+        (a, b) =>
+          sb.from('activity_events')
+            .select('session_id, event_type, metadata')
+            .in('event_type', ['product_view', 'add_to_cart', 'checkout_start'])
+            .not('metadata->>via_featured', 'is', null)
+            .gte('created_at', f).lte('created_at', t)
+            .order('created_at', { ascending: true }).range(a, b),
+        10000
+      );
+      type FA = { clicks: number; sessions: Set<string>; cart: Set<string>; co: Set<string> };
+      const fa = new Map<string, FA>();
+      for (const r of frows) {
+        const p = String(r.metadata?.via_featured ?? '');
+        if (!p) continue;
+        let x = fa.get(p);
+        if (!x) fa.set(p, (x = { clicks: 0, sessions: new Set(), cart: new Set(), co: new Set() }));
+        x.sessions.add(r.session_id);
+        if (r.event_type === 'product_view') x.clicks++;
+        else if (r.event_type === 'add_to_cart') x.cart.add(r.session_id);
+        else if (r.event_type === 'checkout_start') x.co.add(r.session_id);
+      }
+      const seenOrders = new Set<string>();
+      featuredRows = Array.from(fa.entries()).map(([p, x]) => {
+        let orders = 0, revenue = 0;
+        for (const e of main.rows) {
+          if (e.event_type !== 'purchase' || !x.sessions.has(e.session_id)) continue;
+          const k = `${p}|${e.session_id}|${e.created_at}`;
+          if (seenOrders.has(k)) continue;
+          seenOrders.add(k);
+          orders++;
+          revenue += Number(e.metadata?.total) || 0;
+        }
+        return {
+          placement: p, label: FEATURED_LABELS[p] ?? p, clicks: x.clicks,
+          cartSessions: x.cart.size, checkoutSessions: x.co.size, orders, revenue: Math.round(revenue),
+        };
+      }).sort((a, b) => b.orders - a.orders || b.cartSessions - a.cartSessions || b.clicks - a.clicks);
+    } catch (e) {
+      console.error('[admin/shopper-insights] featured stats failed', e);
+    }
+
     const body = {
       range: { from: f, to: t },
       generatedAt: new Date().toISOString(),
@@ -493,6 +551,7 @@ export async function GET(req: Request) {
       cartBands: bands.map(({ name, checkouts, purchased }) => ({ name, checkouts, purchased })),
       pincodes,
       abandonedCarts,
+      featured: featuredRows,
       devices: group((v) => v.device || 'Unknown'),
       sources: group((v) => v.source || 'Unknown'),
     };

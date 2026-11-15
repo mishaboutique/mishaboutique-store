@@ -132,11 +132,12 @@ const FEATURED_OPTIONS: { type: FeaturedPlacement; label: string }[] = [
   { type: 'shop', label: 'Shop page (3 product ke baad)' },
   { type: 'category', label: 'Category page (3 product ke baad)' },
   { type: 'product', label: 'Product page ("You may also like" se pehle)' },
+  { type: 'similar', label: 'Similar products me mix (1, phir 2 chhodke)' },
 ];
 
 function FeaturedToggles() {
   const [loaded, setLoaded] = useState(false);
-  const [flags, setFlags] = useState<FeaturedFlags>({ home: false, shop: false, category: false, product: false });
+  const [flags, setFlags] = useState<FeaturedFlags>({ home: false, shop: false, category: false, product: false, similar: false });
   const [missing, setMissing] = useState(false);
   const [saving, setSaving] = useState(false);
 

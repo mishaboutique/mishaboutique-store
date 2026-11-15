@@ -188,6 +188,46 @@ function waitForHuman(): Promise<boolean> {
   return humanPromise;
 }
 
+// ── "Trending" strip se aaya traffic pehchanne ke liye ─────────────────────
+// Visitor strip ke kisi product par click kare to hum sessionStorage me yaad rakhte hain.
+// Phir usi product ke product_view / add_to_cart / checkout_start events me
+// metadata.via_featured = 'home' | 'shop' | ... judta hai. Admin Shopper Insights me
+// isse "strip se kitne click, cart, order aaye" dikhta hai. Koi alag DB column/migration nahi.
+const FEAT_KEY = 'saaj_feat_v1';
+const FEAT_TTL_MS = 2 * 60 * 60 * 1000;
+
+export function markFeaturedClick(productId: string, placement: string) {
+  if (typeof window === 'undefined' || !productId) return;
+  try {
+    const raw = window.sessionStorage.getItem(FEAT_KEY);
+    const map: Record<string, { p: string; at: number; v?: boolean }> = raw ? JSON.parse(raw) : {};
+    const keys = Object.keys(map);
+    if (keys.length > 30) delete map[keys[0]];
+    map[productId] = { p: placement, at: Date.now() };
+    window.sessionStorage.setItem(FEAT_KEY, JSON.stringify(map));
+  } catch {}
+}
+
+function featuredTag(eventType: string, productId?: string): string | null {
+  if (!productId || typeof window === 'undefined') return null;
+  if (!['product_view', 'add_to_cart', 'checkout_start'].includes(eventType)) return null;
+  try {
+    const raw = window.sessionStorage.getItem(FEAT_KEY);
+    if (!raw) return null;
+    const map = JSON.parse(raw);
+    const e = map[productId];
+    if (!e || Date.now() - e.at > FEAT_TTL_MS) return null;
+    if (eventType === 'product_view') {
+      if (e.v) return null; // click sirf ek baar ginna
+      e.v = true;
+      window.sessionStorage.setItem(FEAT_KEY, JSON.stringify(map));
+    }
+    return e.p as string;
+  } catch {
+    return null;
+  }
+}
+
 // ── Admin "tracking band karo" switches ─────────────────────────────────────
 // Admin (Analytics > settings) kuch event types OFF kar sakta hai taaki DB na bhare.
 // Config /api/track-config se aata hai, browser me 30 min cache hota hai.
@@ -252,7 +292,10 @@ export async function trackEvent(eventType: ActivityEventType, options: TrackOpt
       page_path: options.pagePath ?? null,
       product_id: options.productId ?? null,
       order_id: options.orderId ?? null,
-      metadata: options.metadata ?? {},
+      metadata: (() => {
+        const via = featuredTag(eventType, options.productId);
+        return via ? { ...(options.metadata ?? {}), via_featured: via } : options.metadata ?? {};
+      })(),
       campaign_send_id: getCampaignSendId(),
     };
     const geo = await getGeo();

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ShoppingCart, CreditCard, CheckCircle2, Users, Repeat, MapPin, Lightbulb, RefreshCw,
-  AlertTriangle, Download, IndianRupee, PackageSearch, ArrowUp, ArrowDown, ArrowUpDown, MessageCircle, Copy,
+  AlertTriangle, Download, IndianRupee, PackageSearch, ArrowUp, ArrowDown, ArrowUpDown, MessageCircle, Copy, Sparkles,
 } from 'lucide-react';
 import { startOfDay, endOfDay, subDays, format } from 'date-fns';
 import { toast } from 'sonner';
@@ -398,6 +398,52 @@ function PincodeTable({ rows }: { rows: ShopperInsights['pincodes'] }) {
   );
 }
 
+function FeaturedImpactCard({ rows }: { rows: ShopperInsights['featured'] }) {
+  const list = rows ?? [];
+  return (
+    <Section title="Trending strip se kya mila?" right={<Sparkles className="h-4 w-4 text-secondary" />}>
+      {list.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          Abhi strip se koi click nahi aaya. Analytics ke ⚙ box me "Trending Now" ON karo aur 2-3 din data aane do.
+        </p>
+      ) : (
+        <>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b text-xs text-muted-foreground">
+                  <th className="py-2 pr-2 text-left font-medium">Jagah</th>
+                  <th className="px-2 text-right font-medium">Click</th>
+                  <th className="px-2 text-right font-medium">Cart (log)</th>
+                  <th className="px-2 text-right font-medium">Checkout (log)</th>
+                  <th className="px-2 text-right font-medium">Order</th>
+                  <th className="pl-2 text-right font-medium">Revenue</th>
+                </tr>
+              </thead>
+              <tbody>
+                {list.map((r) => (
+                  <tr key={r.placement} className="border-b last:border-0">
+                    <td className="py-2 pr-2">{r.label}</td>
+                    <td className="px-2 text-right">{r.clicks}</td>
+                    <td className="px-2 text-right">{r.cartSessions}</td>
+                    <td className="px-2 text-right">{r.checkoutSessions}</td>
+                    <td className="px-2 text-right font-semibold">{r.orders}</td>
+                    <td className="pl-2 text-right">{formatINR(r.revenue)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-2 text-[11px] text-muted-foreground">
+            Click = strip se khule product ka pehla view. Order = jis session ne strip se click kiya usme hua order. Ek session
+            kai jagah touch kare to dono me ginta hai. Kam data par faisla mat lo.
+          </p>
+        </>
+      )}
+    </Section>
+  );
+}
+
 function buildSuggestions(d: ShopperInsights): string[] {
   const out: string[] = [];
   const t = d.totals;
@@ -583,6 +629,8 @@ export default function ShopperInsightsPanel() {
           ))}
         </ul>
       </Section>
+
+      <FeaturedImpactCard rows={data.featured} />
 
       <Pills value={view} onChange={setView} options={[
         { id: 'products', label: 'Products' }, { id: 'location', label: 'Location' },

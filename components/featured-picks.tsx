@@ -1,8 +1,8 @@
 'use client';
 
 // "Trending Now" strips -- sabse zyada bikne wale / pasand kiye gaye products.
-// Ranking wahi hai jo /shop ka Popularity sort use karta hai (/api/products/popularity,
-// 1 ghante ka cache), isliye Supabase par koi naya load nahi aata.
+// Ranking CONVERSION-first hai (/api/products/trending, 1 ghante ka cache):
+// pichle 30 din me Purchase > Begin checkout > Add to cart > Views, phir lifetime popularity.
 // Har jagah admin toggle se ON/OFF hoti hai (default OFF). Data kam ho to kuch nahi dikhta.
 
 import { useEffect, useMemo, useState } from 'react';
@@ -11,6 +11,7 @@ import { Product } from '@/lib/types';
 import ProductCarousel from '@/components/product/product-carousel';
 import ProductCard from '@/components/product-card';
 import type { FeaturedFlags, FeaturedPlacement } from '@/lib/featured-placements';
+import { markFeaturedClick } from '@/lib/track-api';
 
 const MIN_PICKS = 3; // isse kam products hon to strip chhupa do
 
@@ -29,7 +30,7 @@ function loadFlags(): Promise<FeaturedFlags | null> {
 
 function loadRank(): Promise<string[]> {
   if (!rankPromise) {
-    rankPromise = fetch('/api/products/popularity')
+    rankPromise = fetch('/api/products/trending')
       .then((r) => (r.ok ? r.json() : { ranked: [] }))
       .then((j) => (Array.isArray(j?.ranked) ? (j.ranked as string[]) : []))
       .catch(() => []);
@@ -40,9 +41,9 @@ function loadRank(): Promise<string[]> {
 export function useFeaturedPicks(
   placement: FeaturedPlacement,
   products: Product[],
-  opts: { limit?: number; excludeIds?: string[] } = {}
+  opts: { limit?: number; excludeIds?: string[]; min?: number } = {}
 ): Product[] {
-  const { limit = 8 } = opts;
+  const { limit = 8, min = MIN_PICKS } = opts;
   const excludeKey = (opts.excludeIds ?? []).join(',');
   const [ranked, setRanked] = useState<string[] | null>(null);
 
@@ -70,8 +71,8 @@ export function useFeaturedPicks(
       picks.push(p);
       if (picks.length >= limit) break;
     }
-    return picks.length >= MIN_PICKS ? picks : [];
-  }, [ranked, products, limit, excludeKey]);
+    return picks.length >= min ? picks : [];
+  }, [ranked, products, limit, min, excludeKey]);
 }
 
 /** Home top + Product page ("You may also like" se pehle): normal carousel. */
@@ -92,7 +93,15 @@ export function FeaturedCarousel({
 }) {
   const picks = useFeaturedPicks(placement, products, { limit, excludeIds });
   if (picks.length === 0) return null;
-  return <ProductCarousel eyebrow={eyebrow} title={title} products={picks} viewAllHref="/shop" />;
+  return (
+    <ProductCarousel
+      eyebrow={eyebrow}
+      title={title}
+      products={picks}
+      viewAllHref="/shop"
+      onProductClick={(p) => markFeaturedClick(p.id, placement)}
+    />
+  );
 }
 
 /** Shop / Category grid ke bich (3 products ke baad): poori row wala highlighted box. */
@@ -120,7 +129,9 @@ export function FeaturedHighlight({
       </div>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
         {picks.map((p) => (
-          <ProductCard key={`fav-${p.id}`} product={p} disableAutoplayVideo />
+          <div key={`fav-${p.id}`} onClickCapture={() => markFeaturedClick(p.id, placement)}>
+            <ProductCard product={p} disableAutoplayVideo />
+          </div>
         ))}
       </div>
     </div>

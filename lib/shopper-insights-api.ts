@@ -66,7 +66,18 @@ export interface AbandonedCartRow {
 
 export interface PincodeRow { pincode: string; place: string; orders: number; revenue: number; problems: number }
 
+export interface FeaturedRow {
+  placement: string;
+  label: string;
+  clicks: number; // strip se khule product ke views
+  cartSessions: number;
+  checkoutSessions: number;
+  orders: number;
+  revenue: number;
+}
+
 export interface ShopperInsights {
+  featured: FeaturedRow[];
   prev: PeriodTotals | null;
   cartBands: { name: string; checkouts: number; purchased: number }[];
   pincodes: PincodeRow[];
