@@ -49,6 +49,44 @@ function SortTh({ label, k, sort, toggle, align = 'right', className = '' }: {
   );
 }
 
+const PAGE_SIZES = [10, 25, 50, 100];
+
+/** Default 10 rows per page; user can change it (10/25/50/100). Goes back to page 1 when data or sort changes. */
+function usePager<T>(rows: T[], initial = 10) {
+  const [size, setSize] = useState(initial);
+  const [page, setPage] = useState(0);
+  const pages = Math.max(1, Math.ceil(rows.length / size));
+  useEffect(() => { setPage(0); }, [rows, size]);
+  const safePage = Math.min(page, pages - 1);
+  const slice = useMemo(() => rows.slice(safePage * size, safePage * size + size), [rows, safePage, size]);
+  return { slice, size, setSize, page: safePage, setPage, pages, total: rows.length };
+}
+
+function Pager({ pager }: { pager: ReturnType<typeof usePager<any>> }) {
+  if (pager.total <= PAGE_SIZES[0]) return null;
+  const from = pager.page * pager.size + 1;
+  const to = Math.min(pager.total, from + pager.size - 1);
+  const btn = 'rounded-md border border-border/60 px-2.5 py-1 text-xs hover:bg-muted disabled:opacity-40';
+  return (
+    <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+      <label className="flex items-center gap-1.5">
+        Ek page me
+        <select value={pager.size} onChange={(e) => pager.setSize(Number(e.target.value))}
+          className="rounded-md border border-border/60 bg-background px-1.5 py-1 text-xs text-foreground">
+          {PAGE_SIZES.map((n) => <option key={n} value={n}>{n}</option>)}
+        </select>
+        rows
+      </label>
+      <span>{from}-{to} / {pager.total}</span>
+      <div className="flex items-center gap-1">
+        <button type="button" className={btn} disabled={pager.page === 0} onClick={() => pager.setPage(pager.page - 1)}>Prev</button>
+        <span className="px-1">Page {pager.page + 1} / {pager.pages}</span>
+        <button type="button" className={btn} disabled={pager.page >= pager.pages - 1} onClick={() => pager.setPage(pager.page + 1)}>Next</button>
+      </div>
+    </div>
+  );
+}
+
 function DeltaBadge({ now, before }: { now: number; before?: number }) {
   if (before === undefined) return null;
   if (before === 0 && now === 0) return null;
@@ -102,8 +140,10 @@ function Pills<T extends string>({ value, options, onChange }: { value: T; optio
 function LocationTable({ rows }: { rows: LocationRow[] }) {
   const enriched = useMemo(() => rows.map((r) => ({ ...r, rate: pct(r.purchased, r.carted) })), [rows]);
   const { sorted, sort, toggle } = useSort(enriched, { key: 'checkout', dir: 'desc' });
+  const pager = usePager(sorted);
   if (!rows.length) return <p className="text-sm text-muted-foreground">Is period me data nahi hai.</p>;
   return (
+    <>
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
@@ -118,7 +158,7 @@ function LocationTable({ rows }: { rows: LocationRow[] }) {
           </tr>
         </thead>
         <tbody>
-          {sorted.map((r) => (
+          {pager.slice.map((r) => (
             <tr key={r.name} className="border-b border-border/40">
               <td className="py-2 pr-3 font-medium">{r.name}</td>
               <td className="px-2 text-right">{r.visitors}</td>
@@ -132,6 +172,8 @@ function LocationTable({ rows }: { rows: LocationRow[] }) {
         </tbody>
       </table>
     </div>
+    <Pager pager={pager} />
+    </>
   );
 }
 
@@ -142,7 +184,9 @@ function ProductsTable({ products }: { products: ShopperInsights['products'] }) 
     cartToCheckout: pct(p.checkoutVisitors, p.atcVisitors),
   })), [products]);
   const { sorted, sort, toggle } = useSort(enriched, { key: 'atcVisitors', dir: 'desc' });
+  const pager = usePager(sorted);
   return (
+    <>
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
@@ -159,7 +203,7 @@ function ProductsTable({ products }: { products: ShopperInsights['products'] }) 
           </tr>
         </thead>
         <tbody>
-          {sorted.map((p) => {
+          {pager.slice.map((p) => {
             const href = p.slug ? `/product/${p.slug}` : null;
             const thumb = p.image ? (
               // eslint-disable-next-line @next/next/no-img-element
@@ -194,6 +238,8 @@ function ProductsTable({ products }: { products: ShopperInsights['products'] }) 
         </tbody>
       </table>
     </div>
+    <Pager pager={pager} />
+    </>
   );
 }
 
@@ -204,7 +250,9 @@ function VisitorsTable({ rows }: { rows: VisitorRow[] }) {
     place: [v.city, v.state].filter((x) => x !== 'Unknown').join(', ') || 'Unknown',
   })), [rows]);
   const { sorted, sort, toggle } = useSort(enriched, { key: 'visits', dir: 'desc' });
+  const pager = usePager(sorted);
   return (
+    <>
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
@@ -222,7 +270,7 @@ function VisitorsTable({ rows }: { rows: VisitorRow[] }) {
           </tr>
         </thead>
         <tbody>
-          {sorted.map((v) => (
+          {pager.slice.map((v) => (
             <tr key={v.id + v.firstSeen} className="border-b border-border/40 align-top">
               <td className="py-2 pr-3 font-medium">{v.label}</td>
               <td className="px-2 text-right">{v.visits}</td>
@@ -243,6 +291,8 @@ function VisitorsTable({ rows }: { rows: VisitorRow[] }) {
         </tbody>
       </table>
     </div>
+    <Pager pager={pager} />
+    </>
   );
 }
 
@@ -313,8 +363,10 @@ function UtmBuilder() {
 function PincodeTable({ rows }: { rows: ShopperInsights['pincodes'] }) {
   const enriched = useMemo(() => rows.map((r) => ({ ...r, problemRate: pct(r.problems, r.orders) })), [rows]);
   const { sorted, sort, toggle } = useSort(enriched, { key: 'orders', dir: 'desc' });
+  const pager = usePager(sorted);
   if (!rows.length) return <p className="text-sm text-muted-foreground">Is period me orders nahi hain.</p>;
   return (
+    <>
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
@@ -328,7 +380,7 @@ function PincodeTable({ rows }: { rows: ShopperInsights['pincodes'] }) {
           </tr>
         </thead>
         <tbody>
-          {sorted.map((r) => (
+          {pager.slice.map((r) => (
             <tr key={r.pincode} className="border-b border-border/40">
               <td className="py-2 pr-3 font-medium">{r.pincode}</td>
               <td className="px-2 text-muted-foreground">{r.place || '-'}</td>
@@ -341,6 +393,8 @@ function PincodeTable({ rows }: { rows: ShopperInsights['pincodes'] }) {
         </tbody>
       </table>
     </div>
+    <Pager pager={pager} />
+    </>
   );
 }
 
